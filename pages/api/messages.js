@@ -1,0 +1,44 @@
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
+export default async function handler(req, res) {
+  if (req.method === 'GET') {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(200).json(data)
+  }
+
+  if (req.method === 'POST') {
+    const { content, type, device_label } = req.body
+    if (!content) return res.status(400).json({ error: 'Content required' })
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert([{ content, type: type || 'text', device_label: device_label || 'Unknown' }])
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(200).json(data)
+  }
+
+  if (req.method === 'DELETE') {
+    const { id } = req.query
+    if (!id) return res.status(400).json({ error: 'ID required' })
+
+    const { error } = await supabase.from('messages').delete().eq('id', id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(200).json({ success: true })
+  }
+
+  res.status(405).json({ error: 'Method not allowed' })
+}
