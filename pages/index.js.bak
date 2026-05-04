@@ -291,27 +291,15 @@ export default function Home({ initialMessages }) {
   }
 
   const handleFileDrop = (e) => {
-  e.preventDefault()
-  setDragging(false)
-
-  let file = null
-
-  if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-    const item = e.dataTransfer.items[0]
-    if (item.kind === 'file') {
-      file = item.getAsFile()
+    e.preventDefault()
+    setDragging(false)
+    const file = e.dataTransfer?.files?.[0]
+    if (file) {
+      setSelectedFile(file)
+      setActiveTab('file')
     }
-  } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-    file = e.dataTransfer.files[0]
   }
 
-  if (file && file.size > 0) {
-    setSelectedFile(file)
-    setActiveTab('file')
-  } else {
-    console.warn('File kosong atau gagal dibaca')
-  }
-}
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleSendText()
