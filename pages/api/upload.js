@@ -19,7 +19,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const form = formidable({ maxFileSize: 50 * 1024 * 1024 }) // 50MB limit
+  // Dinaikkan ke 500MB supaya video bisa terupload
+  const form = formidable({ maxFileSize: 500 * 1024 * 1024 })
 
   form.parse(req, async (err, fields, files) => {
     if (err) {

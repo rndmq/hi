@@ -94,10 +94,45 @@ function CopyButton({ text }) {
   )
 }
 
+function CopyLinkButton({ url }) {
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <button className={`btn-copy-link ${copied ? 'copied' : ''}`} onClick={copy}>
+      {copied ? '✓ Copied' : '🔗 Copy Link'}
+    </button>
+  )
+}
+
 function MessageCard({ msg, onDelete, isNew }) {
   const isFile = msg.type === 'file'
   const isImage = msg.file_type?.startsWith('image/')
+  const isVideo = msg.file_type?.startsWith('video/')
   const deviceClass = getDeviceClass(msg.device_label)
+
+  // Fetch+blob agar browser langsung download, bukan buka tab baru
+  const handleDownload = async () => {
+    try {
+      const res = await fetch(msg.content)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = msg.file_name || 'download'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch (e) {
+      console.error('Download gagal:', e)
+    }
+  }
 
   return (
     <div className={`msg-card ${isNew ? 'new-item' : ''}`}>
@@ -118,15 +153,26 @@ function MessageCard({ msg, onDelete, isNew }) {
                 loading="lazy"
               />
             )}
-            <div className="file-card" style={{ marginTop: isImage ? 8 : 0 }}>
+            {isVideo && (
+              <video
+                src={msg.content}
+                controls
+                className="video-preview"
+                preload="metadata"
+              />
+            )}
+            <div className="file-card" style={{ marginTop: (isImage || isVideo) ? 8 : 0 }}>
               <span className="file-icon">{getFileIcon(msg.file_type, msg.file_name)}</span>
               <div className="file-info">
                 <div className="file-name">{msg.file_name}</div>
                 <div className="file-size">{formatBytes(msg.file_size)}</div>
               </div>
-              <a href={msg.content} target="_blank" rel="noopener noreferrer" download={msg.file_name} className="btn-download">
-                ↓ Download
-              </a>
+              <div className="file-actions">
+                <button className="btn-download" onClick={handleDownload}>
+                  ↓ Download
+                </button>
+                <CopyLinkButton url={msg.content} />
+              </div>
             </div>
           </div>
         ) : (
