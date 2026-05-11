@@ -64,7 +64,7 @@ function detectDeviceLabel() {
   if (/Mac/i.test(ua)) return 'Mac'
   if (/Windows/i.test(ua)) return 'Windows PC'
   if (/Linux/i.test(ua)) return 'Linux'
-  return 'Device'
+  return 'Hp'
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
