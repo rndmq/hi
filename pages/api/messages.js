@@ -18,18 +18,22 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { content, type, device_label } = req.body
-    if (!content) return res.status(400).json({ error: 'Content required' })
+  const { content, type, device_label } = req.body
+  if (!content) return res.status(400).json({ error: 'Content required' })
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert([{ content, type: type || 'text', device_label: device_label || 'Unknown' }])
-      .select()
-      .single()
+  const { data, error } = await supabase
+    .from('messages')
+    .insert([{ content, type: type || 'text', device_label: device_label || 'Unknown' }])
+    .select()
+    .single()
 
-    if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json(data)
+  // tambahin ini
+  if (error) {
+    console.error('SUPABASE ERROR:', JSON.stringify(error))
+    return res.status(500).json({ error: error.message })
   }
+  return res.status(200).json(data)
+}
 
   if (req.method === 'DELETE') {
     const { id } = req.query
