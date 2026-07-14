@@ -49,6 +49,32 @@ function isUrl(text) {
   catch { return false }
 }
 
+// Harus sama persis dengan file_size_limit bucket 'localshare' di Supabase
+// Storage (lihat supabase_storage_policies.sql). Kalau nanti limit di
+// Supabase diubah, ubah juga angka ini supaya pesan error di UI tetap akurat.
+const MAX_FILE_SIZE = 75 * 1024 * 1024 // 75MB
+
+// Vercel (atau proxy di depannya) kadang membalas HTML/plain-text alih-alih JSON
+// saat request gagal sebelum sempat masuk ke handler kita — misalnya saat body
+// request melebihi hard limit ukuran Vercel (~4.5MB) atau saat function timeout.
+// Kalau ini terjadi, res.json() akan melempar "Unexpected token '<' ... is not
+// valid JSON" karena body-nya sebenarnya halaman HTML, bukan JSON.
+// Helper ini mengecek content-type dulu supaya errornya jelas dan tidak crash.
+async function safeParseResponse(res) {
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) {
+    const text = await res.text()
+    if (res.status === 413 || /entity too large/i.test(text)) {
+      throw new Error('File terlalu besar untuk diupload lewat server (limit ~4.5MB per request). Coba file yang lebih kecil.')
+    }
+    if (!res.ok) {
+      throw new Error(`Server error (${res.status}). Coba lagi atau gunakan file yang lebih kecil.`)
+    }
+    throw new Error('Response tidak valid dari server.')
+  }
+  return res.json()
+}
+
 function getDeviceClass(label) {
   const l = label?.toLowerCase() || ''
   if (l.includes('laptop') || l.includes('pc') || l.includes('mac') || l.includes('windows') || l.includes('linux')) return 'laptop'
@@ -200,7 +226,7 @@ export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
   const [textInput, setTextInput] = useState('')
-  const [selectedFile, setSelectedFile] = useState(null)
+  const [selectedFiles, setSelectedFiles] = useState([])
   const [deviceLabel, setDeviceLabel] = useState('')
   const [sending, setSending] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -280,39 +306,82 @@ export default function Home({ initialMessages }) {
   }
 
   const handleSendFile = async () => {
-    if (!selectedFile) return
+    if (selectedFiles.length === 0) return
     setSending(true)
     setUploadProgress(0)
 
-    const formData = new FormData()
-    formData.append('file', selectedFile)
-    formData.append('device_label', deviceLabel)
+    // PENTING: File diupload LANGSUNG ke Supabase Storage dari browser
+    // (bukan lewat /api/upload di Vercel), supaya tidak kena hard limit body
+    // request Vercel (~4.5MB). Setelah file berhasil naik ke Storage, kita
+    // baru simpan metadata-nya (URL, nama file, dll — semuanya teks kecil)
+    // lewat /api/messages, yang amannya jauh di bawah limit tersebut.
+    const total = selectedFiles.length
+    let completed = 0
+    const failed = [] // { index, file_name, error }
 
-    // Fake progress
-    const progressInterval = setInterval(() => {
-      setUploadProgress(p => Math.min(p + 10, 85))
-    }, 200)
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i]
+      try {
+        // Nama file dibuat unik supaya tidak bentrok antar-upload
+        const uniqueName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${file.name}`
+        const filePath = `uploads/${uniqueName}`
 
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      })
-      clearInterval(progressInterval)
-      setUploadProgress(100)
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Upload failed')
+        const { error: uploadError } = await supabase.storage
+          .from('localshare')
+          .upload(filePath, file, {
+            contentType: file.type || 'application/octet-stream',
+            upsert: false,
+          })
+
+        if (uploadError) throw uploadError
+
+        const { data: urlData } = supabase.storage
+          .from('localshare')
+          .getPublicUrl(filePath)
+
+        // Simpan metadata ke tabel messages lewat endpoint server yang sudah
+        // ada. Payload ini murni teks (URL + info file), jauh di bawah limit
+        // body Vercel, jadi tidak akan pernah kena masalah "Request Entity
+        // Too Large" walau file aslinya berukuran ratusan MB.
+        const res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: urlData.publicUrl,
+            type: 'file',
+            file_name: file.name,
+            file_size: file.size,
+            file_type: file.type,
+            device_label: deviceLabel,
+          }),
+        })
+
+        const body = await safeParseResponse(res)
+        if (!res.ok) throw new Error(body.error || 'Gagal menyimpan metadata file')
+
+        completed += 1
+        setUploadProgress(Math.round((completed / total) * 100))
+      } catch (e) {
+        failed.push({ index: i, file_name: file.name, error: e.message })
       }
-      setSelectedFile(null)
-      showToast('File uploaded!')
-    } catch (e) {
-      clearInterval(progressInterval)
-      showToast(e.message, 'error')
-    } finally {
-      setSending(false)
-      setTimeout(() => setUploadProgress(0), 500)
     }
+
+    if (failed.length === 0) {
+      showToast(total > 1 ? `${total} file berhasil diupload!` : 'File uploaded!')
+      setSelectedFiles([])
+    } else if (failed.length < total) {
+      const names = failed.map(f => f.file_name).join(', ')
+      showToast(`Sebagian gagal diupload: ${names}`, 'error')
+      // Sisakan hanya file yang gagal (dicocokkan lewat index asli, bukan
+      // nama, supaya tetap benar walau ada 2 file dengan nama sama)
+      const failedIndexes = new Set(failed.map(f => f.index))
+      setSelectedFiles(prev => prev.filter((_, idx) => failedIndexes.has(idx)))
+    } else {
+      showToast(failed[0]?.error || 'Semua file gagal diupload', 'error')
+    }
+
+    setSending(false)
+    setTimeout(() => setUploadProgress(0), 500)
   }
 
   const handleDelete = async (id) => {
@@ -336,28 +405,47 @@ export default function Home({ initialMessages }) {
     }
   }
 
-  const handleFileDrop = (e) => {
-  e.preventDefault()
-  setDragging(false)
+  // Helper bersama untuk menambahkan file (dari input klik, drag-drop, atau
+  // tombol "tambah file lagi"), dengan validasi ukuran sebelum file benar-benar
+  // ditambahkan ke antrean upload. Ini supaya user langsung tahu kalau file
+  // kelewat besar, tanpa perlu menunggu upload gagal di tengah jalan.
+  const addFiles = (newFiles) => {
+    const tooBig = newFiles.filter(f => f.size > MAX_FILE_SIZE)
+    const ok = newFiles.filter(f => f.size <= MAX_FILE_SIZE)
 
-  let file = null
-
-  if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-    const item = e.dataTransfer.items[0]
-    if (item.kind === 'file') {
-      file = item.getAsFile()
+    if (tooBig.length > 0) {
+      const names = tooBig.map(f => f.name).join(', ')
+      showToast(`Melebihi ${formatBytes(MAX_FILE_SIZE)}, tidak ditambahkan: ${names}`, 'error')
     }
-  } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-    file = e.dataTransfer.files[0]
+    if (ok.length > 0) {
+      setSelectedFiles(prev => [...prev, ...ok])
+    }
   }
 
-  if (file && file.size > 0) {
-    setSelectedFile(file)
-    setActiveTab('file')
-  } else {
-    console.warn('File kosong atau gagal dibaca')
+  const handleFileDrop = (e) => {
+    e.preventDefault()
+    setDragging(false)
+
+    let droppedFiles = []
+
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      droppedFiles = Array.from(e.dataTransfer.items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter(Boolean)
+    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      droppedFiles = Array.from(e.dataTransfer.files)
+    }
+
+    const validFiles = droppedFiles.filter(f => f && f.size > 0)
+
+    if (validFiles.length > 0) {
+      addFiles(validFiles)
+      setActiveTab('file')
+    } else {
+      console.warn('File kosong atau gagal dibaca')
+    }
   }
-}
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleSendText()
@@ -446,7 +534,7 @@ export default function Home({ initialMessages }) {
 
             {/* File Tab */}
             <div className={`tab-content ${activeTab === 'file' ? 'active' : ''}`}>
-              {!selectedFile ? (
+              {selectedFiles.length === 0 ? (
                 <div
                   className={`drop-zone ${dragging ? 'dragging' : ''}`}
                   onClick={() => fileInputRef.current?.click()}
@@ -454,23 +542,53 @@ export default function Home({ initialMessages }) {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+                    multiple
+                    onChange={e => {
+                      const picked = Array.from(e.target.files || [])
+                      if (picked.length > 0) addFiles(picked)
+                    }}
                     onClick={e => e.stopPropagation()}
                   />
                   <div className="drop-icon">📂</div>
                   <div className="drop-text">
-                    <strong>Klik atau drag & drop</strong> file di sini
+                    <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
                   </div>
-                  <div className="drop-limit">Max 50MB</div>
+                  <div className="drop-limit">Max {formatBytes(MAX_FILE_SIZE)} per file</div>
                 </div>
               ) : (
-                <div className="selected-file">
-                  <span className="selected-file-icon">{getFileIcon(selectedFile.type, selectedFile.name)}</span>
-                  <div className="selected-file-info">
-                    <div className="selected-file-name">{selectedFile.name}</div>
-                    <div className="selected-file-size">{formatBytes(selectedFile.size)}</div>
-                  </div>
-                  <button className="btn-remove-file" onClick={() => setSelectedFile(null)}>✕</button>
+                <div className="selected-files-list">
+                  {selectedFiles.map((f, i) => (
+                    <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
+                      <span className="selected-file-icon">{getFileIcon(f.type, f.name)}</span>
+                      <div className="selected-file-info">
+                        <div className="selected-file-name">{f.name}</div>
+                        <div className="selected-file-size">{formatBytes(f.size)}</div>
+                      </div>
+                      <button
+                        className="btn-remove-file"
+                        onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    className="btn-add-more-files"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    + Tambah file lagi
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const picked = Array.from(e.target.files || [])
+                      if (picked.length > 0) addFiles(picked)
+                      e.target.value = ''
+                    }}
+                  />
                 </div>
               )}
 
@@ -493,9 +611,13 @@ export default function Home({ initialMessages }) {
               <button
                 className="btn-send"
                 onClick={handleSendFile}
-                disabled={!selectedFile || sending}
+                disabled={selectedFiles.length === 0 || sending}
               >
-                {sending ? `Uploading ${uploadProgress}%...` : '↑ Upload File'}
+                {sending
+                  ? `Uploading ${uploadProgress}%...`
+                  : selectedFiles.length > 1
+                    ? `↑ Upload ${selectedFiles.length} File`
+                    : '↑ Upload File'}
               </button>
             </div>
           </div>

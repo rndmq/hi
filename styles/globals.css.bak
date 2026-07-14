@@ -420,38 +420,6 @@ textarea::placeholder {
   color: var(--red);
 }
 
-/* Selected files list (multi-file) — wraps multiple .selected-file rows
-   plus the "tambah file lagi" button below them */
-.selected-files-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.selected-files-list .selected-file {
-  animation: slideIn 0.2s ease;
-}
-
-.btn-add-more-files {
-  align-self: flex-start;
-  padding: 7px 14px;
-  background: var(--bg3);
-  border: 1px dashed var(--border2);
-  border-radius: 8px;
-  color: var(--text2);
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-add-more-files:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-dim2);
-}
-
 /* Device label */
 .device-row {
   display: flex;

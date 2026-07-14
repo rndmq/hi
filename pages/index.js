@@ -75,6 +75,68 @@ async function safeParseResponse(res) {
   return res.json()
 }
 
+// supabase-js SDK punya method storage.upload(), tapi method itu dibangun di
+// atas fetch(), dan fetch() tidak punya API untuk membaca progress upload
+// (baru ReadableStream response yang didukung luas, bukan request body).
+// Supaya progress bar bisa menunjukkan persentase real per-byte, kita panggil
+// REST API Storage Supabase secara langsung lewat XMLHttpRequest, yang punya
+// event upload.onprogress bawaan.
+//
+// Endpoint & header di bawah ini mengikuti format resmi Storage REST API
+// Supabase: POST {supabaseUrl}/storage/v1/object/{bucket}/{path}
+// dengan header apikey + Authorization: Bearer {anonKey}.
+//
+// CATATAN: sengaja pakai env var NEXT_PUBLIC_SUPABASE_URL/ANON_KEY langsung
+// (sama seperti yang dipakai lib/supabase.js untuk membuat client), bukan
+// membaca properti internal dari instance client (mis. supabase.supabaseUrl),
+// karena properti itu tidak didokumentasikan sebagai API publik yang stabil.
+function uploadFileToStorageWithProgress(bucket, path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+    if (!supabaseUrl || !anonKey) {
+      reject(new Error('Konfigurasi Supabase (URL/anon key) tidak ditemukan di env.'))
+      return
+    }
+
+    const url = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`
+    const xhr = new XMLHttpRequest()
+
+    xhr.open('POST', url, true)
+    xhr.setRequestHeader('apikey', anonKey)
+    xhr.setRequestHeader('Authorization', `Bearer ${anonKey}`)
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.setRequestHeader('x-upsert', 'false')
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded, e.total)
+      }
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+      } else {
+        let message = `Upload gagal (status ${xhr.status})`
+        try {
+          const parsed = JSON.parse(xhr.responseText)
+          if (parsed.message) message = parsed.message
+        } catch (_) {
+          // Response bukan JSON (misal HTML error page) — pakai pesan default di atas
+        }
+        reject(new Error(message))
+      }
+    }
+
+    xhr.onerror = () => reject(new Error('Koneksi terputus saat upload'))
+    xhr.onabort = () => reject(new Error('Upload dibatalkan'))
+
+    xhr.send(file)
+  })
+}
+
 function getDeviceClass(label) {
   const l = label?.toLowerCase() || ''
   if (l.includes('laptop') || l.includes('pc') || l.includes('mac') || l.includes('windows') || l.includes('linux')) return 'laptop'
@@ -316,7 +378,18 @@ export default function Home({ initialMessages }) {
     // baru simpan metadata-nya (URL, nama file, dll — semuanya teks kecil)
     // lewat /api/messages, yang amannya jauh di bawah limit tersebut.
     const total = selectedFiles.length
-    let completed = 0
+    const totalBytes = selectedFiles.reduce((sum, f) => sum + f.size, 0)
+    // Bytes yang sudah ke-upload per file (index-based), dipakai untuk
+    // menghitung progress gabungan real-time saat beberapa file diupload
+    // berurutan — supaya progress bar bergerak mulus dari 0% ke 100% untuk
+    // keseluruhan batch, bukan reset tiap pindah file.
+    const uploadedBytesPerFile = new Array(selectedFiles.length).fill(0)
+
+    const recomputeProgress = () => {
+      const uploaded = uploadedBytesPerFile.reduce((sum, b) => sum + b, 0)
+      setUploadProgress(totalBytes > 0 ? Math.round((uploaded / totalBytes) * 100) : 0)
+    }
+
     const failed = [] // { index, file_name, error }
 
     for (let i = 0; i < selectedFiles.length; i++) {
@@ -326,14 +399,19 @@ export default function Home({ initialMessages }) {
         const uniqueName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${file.name}`
         const filePath = `uploads/${uniqueName}`
 
-        const { error: uploadError } = await supabase.storage
-          .from('localshare')
-          .upload(filePath, file, {
-            contentType: file.type || 'application/octet-stream',
-            upsert: false,
-          })
-
-        if (uploadError) throw uploadError
+        await uploadFileToStorageWithProgress(
+          'localshare',
+          filePath,
+          file,
+          (loaded) => {
+            uploadedBytesPerFile[i] = loaded
+            recomputeProgress()
+          }
+        )
+        // Pastikan file ini tercatat 100% (byte terakhir kadang tidak
+        // memicu event progress tambahan)
+        uploadedBytesPerFile[i] = file.size
+        recomputeProgress()
 
         const { data: urlData } = supabase.storage
           .from('localshare')
@@ -358,9 +436,6 @@ export default function Home({ initialMessages }) {
 
         const body = await safeParseResponse(res)
         if (!res.ok) throw new Error(body.error || 'Gagal menyimpan metadata file')
-
-        completed += 1
-        setUploadProgress(Math.round((completed / total) * 100))
       } catch (e) {
         failed.push({ index: i, file_name: file.name, error: e.message })
       }
