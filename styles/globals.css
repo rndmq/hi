@@ -843,3 +843,159 @@ input[type="text"]::placeholder {
     display: none;
   }
 }
+
+/* P2P Transfer — kartu progress buat file >75MB yang lewat WebRTC langsung
+   (bukan Supabase Storage). Border kiri biru = "direct connection", biar
+   beda kesannya dari .msg-card biasa yang lewat server. */
+.p2p-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  animation: slideIn 0.3s ease;
+}
+
+.p2p-card.done {
+  border-left-color: var(--accent);
+}
+
+.p2p-card.error {
+  border-left-color: var(--red);
+}
+
+.p2p-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.p2p-card-direction {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.p2p-card-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--blue);
+}
+
+.p2p-card-status.done { color: var(--accent); }
+.p2p-card-status.error { color: var(--red); }
+
+.p2p-card-meta {
+  font-size: 11px;
+  color: var(--text3);
+  margin-bottom: 8px;
+}
+
+.p2p-card-error-text {
+  font-size: 11px;
+  color: var(--red);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.p2p-card-cancel {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s;
+}
+
+.p2p-card-cancel:hover {
+  color: var(--red);
+}
+
+/* Device picker modal — muncul waktu >1 device online, minta user pilih
+   satu tujuan buat kirim P2P */
+.device-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  animation: toastIn 0.2s ease;
+}
+
+.device-picker-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 22px;
+  max-width: 380px;
+  width: 100%;
+}
+
+.device-picker-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.device-picker-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.device-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.device-picker-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim2);
+  color: var(--accent);
+}
+
+.device-picker-cancel {
+  margin-top: 14px;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.device-picker-cancel:hover {
+  color: var(--text2);
+}

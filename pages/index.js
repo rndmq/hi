@@ -52,6 +52,13 @@ function isUrl(text) {
 // Harus sama persis dengan file_size_limit bucket 'localshare' di Supabase
 // Storage (lihat supabase_storage_policies.sql). Kalau nanti limit di
 // Supabase diubah, ubah juga angka ini supaya pesan error di UI tetap akurat.
+//
+// Angka ini sekarang juga jadi threshold routing: file <= ini tetap lewat
+// Supabase Storage (persisten, muncul di feed bersama). File > ini otomatis
+// dikirim P2P lewat WebRTC (lihat bagian "P2P Transfer" di bawah) — jadi
+// TIDAK PERNAH disimpan di Storage/DB sama sekali, cuma numpang lewat
+// koneksi langsung antar browser. Server (Supabase Realtime) cuma dipakai
+// buat signaling (tuker SDP), bukan buat nyimpen data filenya.
 const MAX_FILE_SIZE = 75 * 1024 * 1024 // 75MB
 
 // Vercel (atau proxy di depannya) kadang membalas HTML/plain-text alih-alih JSON
@@ -155,6 +162,205 @@ function detectDeviceLabel() {
   return 'Hp'
 }
 
+// ─── P2P Transfer (WebRTC) ─────────────────────────────────────────────────────
+//
+// Dipakai khusus untuk file > MAX_FILE_SIZE. Alurnya:
+//   1. Pengirim buat RTCPeerConnection + DataChannel, createOffer(), tunggu
+//      ICE gathering selesai (non-trickle — semua kandidat digabung jadi satu
+//      pesan, biar signaling-nya cuma 2 kali kirim: offer & answer, gak perlu
+//      tuker kandidat satu-satu).
+//   2. Offer (lengkap dengan SDP) di-broadcast lewat Supabase Realtime channel
+//      'p2p-signal', ditujukan ke satu deviceId spesifik (bukan disiarkan ke
+//      semua orang). Broadcast Realtime ini EPHEMERAL — tidak pernah nyentuh
+//      Postgres, jadi tidak ada jejak yang kesimpen.
+//   3. Penerima terima offer, buat PeerConnection sendiri, createAnswer(),
+//      broadcast balik ke pengirim.
+//   4. Begitu kedua sisi setRemoteDescription, browser saling connect
+//      LANGSUNG (P2P sungguhan, byte file tidak pernah lewat server) dan
+//      DataChannel kebuka. Baru dari situ file dikirim chunk-per-chunk.
+//
+// CATATAN: karena non-trickle ICE cuma pakai STUN publik (tidak ada TURN
+// server), transfer bisa gagal connect kalau kedua device ada di belakang
+// NAT yang sama-sama "ketat"/simetris (jarang terjadi untuk WiFi rumah biasa,
+// tapi bisa kejadian di sebagian jaringan kantor/kampus/beberapa kartu
+// operator seluler). Kalau ini sering kejadian, solusinya nambah TURN server
+// (misal self-host coturn atau pakai layanan seperti Metered/Twilio) di
+// konfigurasi iceServers pada createPeerConnection().
+//
+// PENTING soal STUN & "jarak": STUN cuma dipakai sekali di awal buat tau
+// alamat publik device (paket kecil, hitungan milidetik) — bukan buat
+// nglewatin data file. Begitu koneksi P2P kebentuk, STUN server sudah tidak
+// terlibat sama sekali; byte file mengalir langsung device-ke-device. Kalau
+// kedua device di jaringan lokal yang sama, ICE bahkan akan lebih dulu coba
+// kandidat LAN langsung sebelum sempat butuh STUN. Jadi provider/lokasi STUN
+// TIDAK mempengaruhi kecepatan transfer — ini beda dengan TURN (relay),
+// yang kalau nanti ditambah, lokasinya baru benar-benar berpengaruh ke
+// kecepatan karena TURN memang meneruskan datanya lewat server itu.
+// Di bawah ini tetap dipakai 2 provider (bukan cuma satu) supaya ICE
+// gathering tidak bergantung ke satu pihak saja kalau salah satunya lambat/
+// down — Cloudflare sebagai yang utama, Google sebagai cadangan.
+const ICE_SERVERS = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+]
+
+// 64KB — masih aman & didukung luas di browser modern (Chrome/Firefox/
+// Safari/Edge terkini semua oke di atas 16KB). Batas "aman" 16KB yang sering
+// dipakai di tutorial WebRTC itu peninggalan bug Chrome versi lama yang
+// sudah lama diperbaiki. Naikin ke 64KB dikit ngurangin overhead per
+// panggilan dc.send(), tapi TIDAK mengubah cerita besarnya: backpressure di
+// bawah (bufferedAmount + event 'bufferedamountlow') yang bikin chunk
+// dikirim beruntun tanpa nunggu balesan satu-satu, jadi kecepatan transfer
+// tetap dibatasi bandwidth koneksi, bukan ukuran chunk-nya.
+const P2P_CHUNK_SIZE = 64 * 1024 // 64KB
+const P2P_BUFFERED_AMOUNT_LOW = 1 * 1024 * 1024 // 1MB — ambang buat nunggu buffer ngosong dulu
+const P2P_CONNECT_TIMEOUT_MS = 20000 // batas waktu nunggu koneksi P2P kebentuk
+
+function createP2PPeerConnection() {
+  return new RTCPeerConnection({ iceServers: ICE_SERVERS })
+}
+
+// Nunggu ICE gathering kelar (non-trickle). Ada fallback timeout 5 detik
+// supaya tidak macet total kalau ada satu kandidat yang lambat/gantung.
+function waitForIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve()
+  return new Promise((resolve) => {
+    function check() {
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', check)
+        resolve()
+      }
+    }
+    pc.addEventListener('icegatheringstatechange', check)
+    setTimeout(resolve, 5000)
+  })
+}
+
+// Kasih feedback error yang jelas kalau koneksi P2P gagal terbentuk atau
+// putus di tengah jalan. Mengembalikan id timeout-nya — pemanggil WAJIB
+// clearTimeout() manual begitu koneksi berhasil kepakai (lihat pemakaian di
+// dc.onopen / pc.ondatachannel), supaya tidak salah nembak error timeout
+// padahal transfer-nya sebenarnya sukses.
+function attachP2PWatchdog(pc, transferId, updateTransfer) {
+  const timeoutId = setTimeout(() => {
+    updateTransfer(transferId, {
+      status: 'error',
+      error: 'Koneksi P2P timeout. Pastikan device tujuan online & tab LocalShare-nya masih terbuka.',
+    })
+  }, P2P_CONNECT_TIMEOUT_MS)
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') {
+      clearTimeout(timeoutId)
+    } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+      clearTimeout(timeoutId)
+      updateTransfer(transferId, {
+        status: 'error',
+        error: 'Koneksi P2P terputus atau gagal dibuat (kemungkinan diblokir NAT/firewall).',
+      })
+    }
+  }
+
+  return timeoutId
+}
+
+// Kirim file lewat DataChannel dalam potongan kecil, dengan backpressure:
+// kalau dc.bufferedAmount masih tinggi, tunggu event 'bufferedamountlow' dulu
+// sebelum lanjut kirim chunk berikutnya. Tanpa ini, file besar bisa bikin
+// buffer membengkak tak terkendali dan koneksi jadi tidak stabil/macet.
+function sendFileOverDataChannel(dc, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    dc.bufferedAmountLowThreshold = P2P_BUFFERED_AMOUNT_LOW
+    let offset = 0
+    const reader = new FileReader()
+
+    function readNextChunk() {
+      if (offset >= file.size) {
+        try {
+          dc.send(JSON.stringify({ type: 'done' }))
+          resolve()
+        } catch (e) {
+          reject(e)
+        }
+        return
+      }
+      reader.readAsArrayBuffer(file.slice(offset, offset + P2P_CHUNK_SIZE))
+    }
+
+    reader.onerror = () => reject(new Error('Gagal membaca file dari disk'))
+    reader.onload = () => {
+      const chunk = reader.result
+      try {
+        dc.send(chunk)
+      } catch (e) {
+        reject(new Error('Gagal mengirim chunk: ' + e.message))
+        return
+      }
+      offset += chunk.byteLength
+      onProgress(offset, file.size)
+
+      if (dc.bufferedAmount > P2P_BUFFERED_AMOUNT_LOW) {
+        dc.onbufferedamountlow = () => {
+          dc.onbufferedamountlow = null
+          readNextChunk()
+        }
+      } else {
+        readNextChunk()
+      }
+    }
+
+    // Pesan pertama: metadata (JSON teks) supaya penerima tahu nama/ukuran/
+    // tipe file sebelum chunk biner pertama datang.
+    dc.send(JSON.stringify({ type: 'meta', name: file.name, size: file.size, mimeType: file.type }))
+    readNextChunk()
+  })
+}
+
+// Pasang handler di DataChannel milik penerima: kumpulkan chunk biner ke
+// array, dan proses 2 jenis pesan kontrol (JSON teks): 'meta' di awal,
+// 'done' di akhir yang memicu penggabungan semua chunk jadi satu Blob.
+function attachP2PReceiver(dc, { onMeta, onProgress, onComplete, onError }) {
+  let meta = null
+  let chunks = []
+  let receivedBytes = 0
+
+  dc.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'meta') {
+          meta = msg
+          chunks = []
+          receivedBytes = 0
+          onMeta(msg)
+        } else if (msg.type === 'done') {
+          const blob = new Blob(chunks, { type: meta?.mimeType || 'application/octet-stream' })
+          onComplete(blob, meta)
+        }
+      } catch (err) {
+        onError(new Error('Pesan kontrol dari pengirim tidak valid'))
+      }
+      return
+    }
+    chunks.push(e.data)
+    receivedBytes += e.data.byteLength ?? e.data.size ?? 0
+    if (meta) onProgress(receivedBytes, meta.size)
+  }
+}
+
+// Sama seperti handleDownload di MessageCard: pakai Blob + link sementara
+// biar browser langsung download alih-alih buka tab baru.
+function triggerBlobDownload(blob, fileName) {
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = fileName || 'download'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(blobUrl)
+}
+
 // ─── Components ───────────────────────────────────────────────────────────────
 
 function Toast({ msg, type, onClose }) {
@@ -195,6 +401,64 @@ function CopyLinkButton({ url }) {
     <button className={`btn-copy-link ${copied ? 'copied' : ''}`} onClick={copy}>
       {copied ? '✓ Copied' : '🔗 Copy Link'}
     </button>
+  )
+}
+
+// Muncul waktu ada >1 device lain yang online dan user mau kirim file besar
+// (P2P) — minta user pilih satu device tujuan.
+function DevicePickerModal({ files, devices, onPick, onCancel }) {
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0)
+  return (
+    <div className="device-picker-overlay" onClick={onCancel}>
+      <div className="device-picker-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="device-picker-title">📡 Kirim langsung ke device mana?</div>
+        <div className="device-picker-desc">
+          {files.length > 1 ? `${files.length} file` : files[0]?.name} ({formatBytes(totalSize)}) melebihi {formatBytes(MAX_FILE_SIZE)}, jadi dikirim P2P langsung ke satu device — bukan lewat server. Device tujuan harus online sekarang.
+        </div>
+        <div className="device-picker-list">
+          {devices.map((d) => (
+            <button key={d.id} className="device-picker-option" onClick={() => onPick(d)}>
+              {getDeviceClass(d.label) === 'laptop' ? '💻' : getDeviceClass(d.label) === 'phone' ? '📱' : '🖥️'} {d.label}
+            </button>
+          ))}
+        </div>
+        <button className="device-picker-cancel" onClick={onCancel}>Batal</button>
+      </div>
+    </div>
+  )
+}
+
+// Kartu progress buat satu transfer P2P (kirim ATAU terima). Ini SENGAJA
+// tidak masuk ke feed 'Shared Items' yang biasa — karena sifatnya beda:
+// ephemeral (hilang begitu selesai/gagal), dan cuma relevan buat 2 device
+// yang terlibat, bukan buat semua orang yang lihat feed.
+function P2PTransferCard({ t, onCancel }) {
+  const isDone = t.status === 'done'
+  const isError = t.status === 'error'
+  const isActive = !isDone && !isError
+  const stateClass = isDone ? 'done' : isError ? 'error' : ''
+
+  return (
+    <div className={`p2p-card ${stateClass}`}>
+      <div className="p2p-card-top">
+        <span className="p2p-card-direction">
+          {t.direction === 'send' ? `↑ Kirim ke ${t.deviceLabel}` : `↓ Terima dari ${t.deviceLabel}`}
+        </span>
+        <span className={`p2p-card-status ${stateClass}`}>
+          {isDone ? '✓ Selesai' : isError ? '✕ Gagal' : t.status === 'connecting' ? 'Connecting...' : `${t.progress}%`}
+        </span>
+      </div>
+      <div className="p2p-card-meta">{t.fileName} · {formatBytes(t.fileSize)}</div>
+      {isActive && (
+        <div className="progress-bar">
+          <div className="progress-fill" style={{ width: `${t.progress}%` }} />
+        </div>
+      )}
+      {isError && <div className="p2p-card-error-text">{t.error}</div>}
+      {isActive && (
+        <button className="p2p-card-cancel" onClick={() => onCancel(t.id)}>✕ Batal</button>
+      )}
+    </div>
   )
 }
 
@@ -299,8 +563,51 @@ export default function Home({ initialMessages }) {
   const fileInputRef = useRef(null)
   const channelRef = useRef(null)
 
+  // ── P2P state ──
+  // Device lain yang lagi online (dari Presence channel 'p2p-signal').
+  const [onlineDevices, setOnlineDevices] = useState([])
+  // Transfer P2P yang lagi berjalan/baru selesai — TIDAK disimpan ke DB,
+  // cuma state lokal di browser masing-masing (pengirim & penerima).
+  const [p2pTransfers, setP2pTransfers] = useState([])
+  // File(s) > MAX_FILE_SIZE yang lagi nunggu user pilih device tujuan
+  // (dipakai kalau onlineDevices.length > 1, jadi tidak bisa auto-pilih).
+  const [pendingP2PFiles, setPendingP2PFiles] = useState(null)
+  const myIdRef = useRef(null) // id unik per-tab, dipakai buat alamat signaling
+  const p2pChannelRef = useRef(null) // channel Supabase buat Presence + Broadcast
+  const p2pConnectionsRef = useRef({}) // transferId -> { pc, dc? } yang lagi aktif
+
   const showToast = useCallback((msg, type = 'success') => {
     setToast({ msg, type })
+  }, [])
+
+  // updateTransfer dipakai di banyak tempat (progress, sukses, error) — kalau
+  // status berubah jadi 'done'/'error', otomatis dijadwalkan buat dibuang
+  // dari layar 4 detik kemudian (mirip Toast), tidak perlu dibersihkan manual.
+  const updateTransfer = useCallback((id, patch) => {
+    setP2pTransfers(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
+    if (patch.status === 'done' || patch.status === 'error') {
+      setTimeout(() => {
+        setP2pTransfers(prev => prev.filter(t => t.id !== id))
+      }, 4000)
+    }
+  }, [])
+
+  const addTransfer = useCallback((t) => {
+    setP2pTransfers(prev => [...prev, t])
+  }, [])
+
+  const cancelTransfer = useCallback((transferId) => {
+    const entry = p2pConnectionsRef.current[transferId]
+    if (entry?.pc) entry.pc.close()
+    delete p2pConnectionsRef.current[transferId]
+    setP2pTransfers(prev => prev.filter(t => t.id !== transferId))
+  }, [])
+
+  // Id unik per-tab untuk alamat signaling (fromId/toId). Dibuat sekali di
+  // efek terpisah (bukan digabung ke efek Presence di bawah) supaya sudah
+  // pasti terisi sebelum device lain sempat mengirim offer ke kita.
+  useEffect(() => {
+    myIdRef.current = crypto.randomUUID()
   }, [])
 
   // Auto-detect device
@@ -347,6 +654,192 @@ export default function Home({ initialMessages }) {
       supabase.removeChannel(channel)
     }
   }, [])
+
+  // Dipanggil di sisi PENGIRIM setelah dapat balasan 'p2p-answer' yang
+  // ditujukan buat kita. Ini langkah terakhir sebelum browser saling connect.
+  const handleIncomingAnswer = useCallback(async (payload) => {
+    const entry = p2pConnectionsRef.current[payload.transferId]
+    if (!entry?.pc) return
+    try {
+      await entry.pc.setRemoteDescription(payload.sdp)
+    } catch (e) {
+      updateTransfer(payload.transferId, { status: 'error', error: 'Gagal menerima jawaban dari device tujuan.' })
+    }
+  }, [updateTransfer])
+
+  // Dipanggil di sisi PENERIMA setiap kali ada broadcast 'p2p-offer' yang
+  // toId-nya cocok sama id kita. Auto-accept (tanpa dialog konfirmasi) —
+  // wajar untuk app antar device sendiri, sama seperti file biasa yang juga
+  // langsung muncul di feed semua orang tanpa perlu approve.
+  const handleIncomingOffer = useCallback(async (payload) => {
+    const { transferId, fromId, fromLabel, fileName, fileSize, sdp } = payload
+    const pc = createP2PPeerConnection()
+    p2pConnectionsRef.current[transferId] = { pc }
+
+    addTransfer({
+      id: transferId, direction: 'receive', deviceLabel: fromLabel,
+      fileName, fileSize, progress: 0, status: 'connecting',
+    })
+
+    const watchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
+
+    pc.ondatachannel = (e) => {
+      const dc = e.channel
+      dc.binaryType = 'arraybuffer'
+      attachP2PReceiver(dc, {
+        onMeta: () => {
+          clearTimeout(watchdog)
+          updateTransfer(transferId, { status: 'receiving' })
+        },
+        onProgress: (loaded, total) => {
+          updateTransfer(transferId, { progress: total > 0 ? Math.round((loaded / total) * 100) : 0 })
+        },
+        onComplete: (blob, meta) => {
+          updateTransfer(transferId, { status: 'done', progress: 100 })
+          triggerBlobDownload(blob, meta?.name || fileName)
+          showToast(`File "${meta?.name || fileName}" diterima dari ${fromLabel}!`)
+          setTimeout(() => pc.close(), 2000)
+        },
+        onError: (err) => {
+          updateTransfer(transferId, { status: 'error', error: err.message })
+        },
+      })
+    }
+
+    try {
+      await pc.setRemoteDescription(sdp)
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      await waitForIceGatheringComplete(pc)
+
+      p2pChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'p2p-answer',
+        payload: { transferId, toId: fromId, sdp: pc.localDescription },
+      })
+    } catch (e) {
+      clearTimeout(watchdog)
+      updateTransfer(transferId, { status: 'error', error: 'Gagal membuat jawaban P2P: ' + e.message })
+    }
+  }, [addTransfer, updateTransfer, showToast])
+
+  // Presence + Broadcast channel khusus buat signaling P2P. TIDAK ada
+  // 'postgres_changes' di sini — channel ini murni ephemeral, tidak pernah
+  // menyentuh Postgres. Presence dipakai buat tahu device lain yang online
+  // (dengan label-nya), Broadcast dipakai buat tuker SDP offer/answer.
+  useEffect(() => {
+    if (!deviceLabel) return
+    if (!myIdRef.current) myIdRef.current = crypto.randomUUID()
+    const myId = myIdRef.current
+
+    const channel = supabase.channel('p2p-signal', {
+      config: { presence: { key: myId } },
+    })
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState()
+        const devices = Object.entries(state)
+          .filter(([id]) => id !== myId)
+          .map(([id, metas]) => ({ id, label: metas?.[0]?.label || 'Unknown' }))
+        setOnlineDevices(devices)
+      })
+      .on('broadcast', { event: 'p2p-offer' }, ({ payload }) => {
+        if (payload?.toId === myId) handleIncomingOffer(payload)
+      })
+      .on('broadcast', { event: 'p2p-answer' }, ({ payload }) => {
+        if (payload?.toId === myId) handleIncomingAnswer(payload)
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ label: deviceLabel })
+        }
+      })
+
+    p2pChannelRef.current = channel
+
+    return () => {
+      supabase.removeChannel(channel)
+      Object.values(p2pConnectionsRef.current).forEach(({ pc }) => pc?.close())
+      p2pConnectionsRef.current = {}
+    }
+  }, [deviceLabel, handleIncomingOffer, handleIncomingAnswer])
+
+  // Dipanggil di sisi PENGIRIM untuk mulai kirim satu file besar ke satu
+  // device tujuan yang sudah dipilih (baik auto-pilih karena cuma ada 1
+  // device online, atau hasil pilihan dari DevicePickerModal).
+  const initiateP2PTransfer = useCallback(async (file, targetDevice) => {
+    const transferId = crypto.randomUUID()
+    const myId = myIdRef.current
+    const pc = createP2PPeerConnection()
+    const dc = pc.createDataChannel('file')
+    dc.binaryType = 'arraybuffer'
+    p2pConnectionsRef.current[transferId] = { pc, dc }
+
+    addTransfer({
+      id: transferId, direction: 'send', deviceLabel: targetDevice.label,
+      fileName: file.name, fileSize: file.size, progress: 0, status: 'connecting',
+    })
+
+    const watchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
+
+    dc.onopen = async () => {
+      clearTimeout(watchdog)
+      updateTransfer(transferId, { status: 'sending' })
+      try {
+        await sendFileOverDataChannel(dc, file, (loaded, total) => {
+          updateTransfer(transferId, { progress: Math.round((loaded / total) * 100) })
+        })
+        updateTransfer(transferId, { status: 'done', progress: 100 })
+        showToast(`File terkirim langsung ke ${targetDevice.label}!`)
+      } catch (e) {
+        updateTransfer(transferId, { status: 'error', error: e.message })
+        showToast('Gagal mengirim P2P: ' + e.message, 'error')
+      } finally {
+        setTimeout(() => pc.close(), 2000)
+      }
+    }
+
+    try {
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      await waitForIceGatheringComplete(pc)
+
+      p2pChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'p2p-offer',
+        payload: {
+          transferId,
+          fromId: myId,
+          fromLabel: deviceLabel,
+          toId: targetDevice.id,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          sdp: pc.localDescription,
+        },
+      })
+    } catch (e) {
+      clearTimeout(watchdog)
+      updateTransfer(transferId, { status: 'error', error: 'Gagal membuat tawaran P2P: ' + e.message })
+    }
+  }, [addTransfer, updateTransfer, showToast, deviceLabel])
+
+  // Titik masuk dari addFiles(): route file besar ke device yang dipilih,
+  // atau auto-pilih kalau cuma ada 1 device lain yang online.
+  const routeBigFilesToP2P = useCallback((files) => {
+    if (onlineDevices.length === 0) {
+      const names = files.map(f => f.name).join(', ')
+      showToast(`Tidak ada device lain yang online untuk P2P: ${names}. Buka LocalShare di device tujuan dulu.`, 'error')
+      return
+    }
+    if (onlineDevices.length === 1) {
+      files.forEach(f => initiateP2PTransfer(f, onlineDevices[0]))
+      return
+    }
+    // Lebih dari 1 device online — minta user pilih lewat modal.
+    setPendingP2PFiles(files)
+  }, [onlineDevices, showToast, initiateP2PTransfer])
 
   const handleSendText = async () => {
     if (!textInput.trim()) return
@@ -481,19 +974,21 @@ export default function Home({ initialMessages }) {
   }
 
   // Helper bersama untuk menambahkan file (dari input klik, drag-drop, atau
-  // tombol "tambah file lagi"), dengan validasi ukuran sebelum file benar-benar
-  // ditambahkan ke antrean upload. Ini supaya user langsung tahu kalau file
-  // kelewat besar, tanpa perlu menunggu upload gagal di tengah jalan.
+  // tombol "tambah file lagi"). File dipecah jadi 2 rute berdasarkan ukuran:
+  //   - <= MAX_FILE_SIZE: masuk ke selectedFiles seperti biasa (nanti upload
+  //     ke Supabase Storage lewat handleSendFile, muncul di feed bersama).
+  //   - > MAX_FILE_SIZE: TIDAK pernah masuk selectedFiles / Storage sama
+  //     sekali. Langsung dialihkan ke routeBigFilesToP2P buat dikirim
+  //     peer-to-peer ke satu device tujuan.
   const addFiles = (newFiles) => {
     const tooBig = newFiles.filter(f => f.size > MAX_FILE_SIZE)
     const ok = newFiles.filter(f => f.size <= MAX_FILE_SIZE)
 
-    if (tooBig.length > 0) {
-      const names = tooBig.map(f => f.name).join(', ')
-      showToast(`Melebihi ${formatBytes(MAX_FILE_SIZE)}, tidak ditambahkan: ${names}`, 'error')
-    }
     if (ok.length > 0) {
       setSelectedFiles(prev => [...prev, ...ok])
+    }
+    if (tooBig.length > 0) {
+      routeBigFilesToP2P(tooBig)
     }
   }
 
@@ -628,7 +1123,9 @@ export default function Home({ initialMessages }) {
                   <div className="drop-text">
                     <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
                   </div>
-                  <div className="drop-limit">Max {formatBytes(MAX_FILE_SIZE)} per file</div>
+                  <div className="drop-limit">
+                    Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
+                  </div>
                 </div>
               ) : (
                 <div className="selected-files-list">
@@ -697,6 +1194,21 @@ export default function Home({ initialMessages }) {
             </div>
           </div>
 
+          {/* P2P Transfers — hanya tampil kalau ada transfer aktif/baru selesai.
+              Ini terpisah dari feed 'Shared Items' karena isinya ephemeral
+              (tidak kesimpen di DB) dan cuma relevan buat 2 device yang
+              terlibat, bukan disiarkan ke semua orang. */}
+          {p2pTransfers.length > 0 && (
+            <div>
+              <div className="feed-header">
+                <span className="feed-title">— P2P Transfer</span>
+              </div>
+              {p2pTransfers.map(t => (
+                <P2PTransferCard key={t.id} t={t} onCancel={cancelTransfer} />
+              ))}
+            </div>
+          )}
+
           {/* Feed */}
           <div>
             <div className="feed-header">
@@ -730,6 +1242,18 @@ export default function Home({ initialMessages }) {
           msg={toast.msg}
           type={toast.type}
           onClose={() => setToast(null)}
+        />
+      )}
+
+      {pendingP2PFiles && (
+        <DevicePickerModal
+          files={pendingP2PFiles}
+          devices={onlineDevices}
+          onPick={(device) => {
+            pendingP2PFiles.forEach(f => initiateP2PTransfer(f, device))
+            setPendingP2PFiles(null)
+          }}
+          onCancel={() => setPendingP2PFiles(null)}
         />
       )}
     </>
