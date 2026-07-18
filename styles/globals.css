@@ -361,78 +361,51 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--surface-2);
 }
 
-.tab-content-viewport {
-  position: relative;
-  overflow: hidden;
-}
-
-.tab-content {
+.morph-panel {
   padding: 18px;
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-.tab-content.active {
-  display: flex;
+/* The box itself is FLIP-animated from JS (transform: translate + scale,
+   snapped from the old rect then eased to identity) — that's what makes it
+   read as "growing/moving" into its new shape rather than swapping panes.
+   The inner content still gets a quick fade+scale so what's *inside* the
+   box (textarea -> drop-zone, drop-zone -> file list) doesn't just pop. */
+.morph-box {
+  will-change: transform;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
 }
 
-/* Slide + fade transition between Text / Upload panes.
-   Direction is driven by data-dir on the viewport:
-   "fwd"  = text -> file  (incoming from right, outgoing to left)
-   "back" = file -> text  (incoming from left, outgoing to right) */
-.tab-content.tab-enter {
-  animation: tabEnter 0.32s var(--ease) forwards;
+.morph-box > * {
+  animation: morphContentIn 0.32s var(--ease) 0.08s both;
 }
 
-.tab-content.tab-exit {
-  animation: tabExit 0.32s var(--ease) forwards;
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.tab-content-viewport[data-dir='fwd'] .tab-enter {
-  --tab-x: 24px;
-}
-
-.tab-content-viewport[data-dir='fwd'] .tab-exit {
-  --tab-x: -24px;
-}
-
-.tab-content-viewport[data-dir='back'] .tab-enter {
-  --tab-x: -24px;
-}
-
-.tab-content-viewport[data-dir='back'] .tab-exit {
-  --tab-x: 24px;
-}
-
-@keyframes tabEnter {
+@keyframes morphContentIn {
   from {
     opacity: 0;
-    transform: translateX(var(--tab-x, 24px));
+    transform: scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: scale(1);
   }
 }
 
-@keyframes tabExit {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(calc(var(--tab-x, 24px) * -1));
-  }
+.btn-send {
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-content.tab-enter,
-  .tab-content.tab-exit {
+  .morph-box,
+  .btn-send {
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .morph-box > * {
     animation: none;
   }
 }

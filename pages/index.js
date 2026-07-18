@@ -679,32 +679,69 @@ function MessageCard({ msg, onDelete, isNew }) {
 export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
-  const [prevTab, setPrevTab] = useState(null)
-  const [tabDir, setTabDir] = useState('fwd')
-  const tabOrder = { text: 0, file: 1 }
+  const morphBoxRef = useRef(null)
+  const sendBtnRef = useRef(null)
+  const prevBoxRectRef = useRef(null)
+  const prevBtnRectRef = useRef(null)
 
   const switchTab = (next) => {
     if (next === activeTab) return
-    setTabDir(tabOrder[next] > tabOrder[activeTab] ? 'fwd' : 'back')
-    setPrevTab(activeTab)
+    // FLIP "First": capture where things are right now, before the DOM changes.
+    if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
+    if (sendBtnRef.current) prevBtnRectRef.current = sendBtnRef.current.getBoundingClientRect()
     setActiveTab(next)
-    window.clearTimeout(switchTab._t)
-    switchTab._t = window.setTimeout(() => setPrevTab(null), 340)
   }
 
-  const paneClass = (name) => {
-    const isCurrent = activeTab === name
-    const isExiting = prevTab === name && activeTab !== name
-    if (!isCurrent && !isExiting) return 'tab-content'
-    const classes = ['tab-content']
-    if (isCurrent) {
-      classes.push('active')
-      if (prevTab) classes.push('tab-enter')
-    } else if (isExiting) {
-      classes.push('active', 'tab-exit')
+  useEffect(() => {
+    // FLIP "Last, Invert, Play": now that React has re-rendered for the new
+    // tab, measure the new layout, work out how far it moved/scaled from the
+    // old one, snap it there instantly via transform, then animate to 0 —
+    // this reads as the box/button *morphing* rather than two panes swapping.
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (reduceMotion) {
+      prevBoxRectRef.current = null
+      prevBtnRectRef.current = null
+      return
     }
-    return classes.join(' ')
-  }
+
+    const box = morphBoxRef.current
+    const prevBox = prevBoxRectRef.current
+    if (box && prevBox) {
+      const next = box.getBoundingClientRect()
+      const dx = prevBox.left - next.left
+      const dy = prevBox.top - next.top
+      const sx = prevBox.width / next.width
+      const sy = prevBox.height / next.height
+      box.style.transformOrigin = 'top left'
+      box.style.transition = 'none'
+      box.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
+      box.getBoundingClientRect() // force reflow
+      requestAnimationFrame(() => {
+        box.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+        box.style.transform = 'translate(0, 0) scale(1, 1)'
+      })
+      prevBoxRectRef.current = null
+    }
+
+    const btn = sendBtnRef.current
+    const prevBtn = prevBtnRectRef.current
+    if (btn && prevBtn) {
+      const next = btn.getBoundingClientRect()
+      const dx = prevBtn.left - next.left
+      const dy = prevBtn.top - next.top
+      const sx = prevBtn.width / next.width
+      btn.style.transformOrigin = 'left center'
+      btn.style.transition = 'none'
+      btn.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, 1)`
+      btn.getBoundingClientRect()
+      requestAnimationFrame(() => {
+        btn.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+        btn.style.transform = 'translate(0, 0) scale(1, 1)'
+      })
+      prevBtnRectRef.current = null
+    }
+  }, [activeTab])
+
   const [textInput, setTextInput] = useState('')
   const [selectedFiles, setSelectedFiles] = useState([])
   const [deviceLabel, setDeviceLabel] = useState('')
@@ -1175,7 +1212,7 @@ export default function Home({ initialMessages }) {
 
     if (validFiles.length > 0) {
       addFiles(validFiles)
-      setActiveTab('file')
+      switchTab('file')
     } else {
       console.warn('File kosong atau gagal dibaca')
     }
@@ -1201,7 +1238,7 @@ export default function Home({ initialMessages }) {
 
       e.preventDefault()
       addFiles(pastedFiles)
-      setActiveTab('file')
+      switchTab('file')
     }
 
     document.addEventListener('paste', handlePaste)
@@ -1316,110 +1353,95 @@ export default function Home({ initialMessages }) {
               </button>
             </div>
 
-            {/* Text Tab */}
-            <div className="tab-content-viewport" data-dir={tabDir}>
-            <div className={paneClass('text')}>
-              <div className="text-area-wrapper">
-                <textarea
-                  placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
-                  value={textInput}
-                  onChange={e => setTextInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  rows={4}
-                />
-                <button
-                  type="button"
-                  className="btn-paste-clipboard"
-                  onClick={handleClipboardButton}
-                  title="Tempel dari clipboard"
-                >
-                  <IconClipboard size={15} />
-                </button>
-                <span className="char-count">{textInput.length}</span>
-              </div>
-
-              <div className="device-row">
-                <label>Dari:</label>
-                <input
-                  type="text"
-                  placeholder="Nama device (mis: Laptop, HP)"
-                  value={deviceLabel}
-                  onChange={e => setDeviceLabel(e.target.value)}
-                />
-              </div>
-
-              <button
-                className="btn-send"
-                onClick={handleSendText}
-                disabled={!textInput.trim() || sending}
-              >
-                {sending ? '...' : '↑ Kirim'}
-              </button>
-            </div>
-
-            {/* File Tab */}
-            <div className={paneClass('file')}>
-              {selectedFiles.length === 0 ? (
-                <div
-                  className={`drop-zone ${dragging ? 'dragging' : ''}`}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    onChange={e => {
-                      const picked = Array.from(e.target.files || [])
-                      if (picked.length > 0) addFiles(picked)
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  />
-                  <div className="drop-icon"><IconFolder size={32} /></div>
-                  <div className="drop-text">
-                    <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
+            <div className="morph-panel">
+              {/* Morphing container: same DOM node across both tabs, so its
+                  box (size/shape) is what gets measured and FLIP-animated —
+                  the textarea area visually grows/reshapes into the drop
+                  zone / file list instead of one pane fading and another
+                  fading in. */}
+              <div className="morph-box" ref={morphBoxRef}>
+                {activeTab === 'text' ? (
+                  <div className="text-area-wrapper">
+                    <textarea
+                      placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
+                      value={textInput}
+                      onChange={e => setTextInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      rows={4}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="btn-paste-clipboard"
+                      onClick={handleClipboardButton}
+                      title="Tempel dari clipboard"
+                    >
+                      <IconClipboard size={15} />
+                    </button>
+                    <span className="char-count">{textInput.length}</span>
                   </div>
-                  <div className="drop-limit">
-                    Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
-                  </div>
-                </div>
-              ) : (
-                <div className="selected-files-list">
-                  {selectedFiles.map((f, i) => (
-                    <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
-                      <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>
-                      <div className="selected-file-info">
-                        <div className="selected-file-name">{f.name}</div>
-                        <div className="selected-file-size">{formatBytes(f.size)}</div>
-                      </div>
-                      <button
-                        className="btn-remove-file"
-                        onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
-                      >
-                        <IconClose size={11} />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    className="btn-add-more-files"
+                ) : selectedFiles.length === 0 ? (
+                  <div
+                    className={`drop-zone ${dragging ? 'dragging' : ''}`}
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    + Tambah file lagi
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={e => {
-                      const picked = Array.from(e.target.files || [])
-                      if (picked.length > 0) addFiles(picked)
-                      e.target.value = ''
-                    }}
-                  />
-                </div>
-              )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      onChange={e => {
+                        const picked = Array.from(e.target.files || [])
+                        if (picked.length > 0) addFiles(picked)
+                      }}
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <div className="drop-icon"><IconFolder size={32} /></div>
+                    <div className="drop-text">
+                      <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
+                    </div>
+                    <div className="drop-limit">
+                      Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
+                    </div>
+                  </div>
+                ) : (
+                  <div className="selected-files-list">
+                    {selectedFiles.map((f, i) => (
+                      <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
+                        <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>
+                        <div className="selected-file-info">
+                          <div className="selected-file-name">{f.name}</div>
+                          <div className="selected-file-size">{formatBytes(f.size)}</div>
+                        </div>
+                        <button
+                          className="btn-remove-file"
+                          onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <IconClose size={11} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="btn-add-more-files"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      + Tambah file lagi
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={e => {
+                        const picked = Array.from(e.target.files || [])
+                        if (picked.length > 0) addFiles(picked)
+                        e.target.value = ''
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
 
-              {uploadProgress > 0 && (
+              {activeTab === 'file' && uploadProgress > 0 && (
                 <div className="progress-bar">
                   <div className="progress-fill" style={{ width: `${uploadProgress}%` }} />
                 </div>
@@ -1429,24 +1451,28 @@ export default function Home({ initialMessages }) {
                 <label>Dari:</label>
                 <input
                   type="text"
-                  placeholder="Nama device"
+                  placeholder={activeTab === 'text' ? 'Nama device (mis: Laptop, HP)' : 'Nama device'}
                   value={deviceLabel}
                   onChange={e => setDeviceLabel(e.target.value)}
                 />
               </div>
 
+              {/* Same button node across tabs — its label/width morphs via FLIP
+                  instead of two separate buttons cross-fading. */}
               <button
                 className="btn-send"
-                onClick={handleSendFile}
-                disabled={selectedFiles.length === 0 || sending}
+                ref={sendBtnRef}
+                onClick={activeTab === 'text' ? handleSendText : handleSendFile}
+                disabled={activeTab === 'text' ? (!textInput.trim() || sending) : (selectedFiles.length === 0 || sending)}
               >
-                {sending
-                  ? `Uploading ${uploadProgress}%...`
-                  : selectedFiles.length > 1
-                    ? `↑ Upload ${selectedFiles.length} File`
-                    : '↑ Upload File'}
+                {activeTab === 'text'
+                  ? (sending ? '...' : '↑ Kirim')
+                  : (sending
+                      ? `Uploading ${uploadProgress}%...`
+                      : selectedFiles.length > 1
+                        ? `↑ Upload ${selectedFiles.length} File`
+                        : '↑ Upload File')}
               </button>
-            </div>
             </div>
           </div>
 
