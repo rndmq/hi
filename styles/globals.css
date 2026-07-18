@@ -368,29 +368,29 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   gap: 14px;
 }
 
-/* The box itself is FLIP-animated from JS (transform: translate + scale,
-   snapped from the old rect then eased to identity) — that's what makes it
-   read as "growing/moving" into its new shape rather than swapping panes.
-   The inner content still gets a quick fade+scale so what's *inside* the
-   box (textarea -> drop-zone, drop-zone -> file list) doesn't just pop. */
+/* The box's height is FLIP-animated from JS (snapped to the old height,
+   then eased to the new one over ~0.6s) — that's what makes it read as the
+   box actually growing/shrinking into its new shape. Animating height
+   instead of scaleY keeps the content inside (text, icons) undistorted,
+   and it naturally pushes the device-row/button below it down or up in
+   sync since they're just flex siblings reacting to the live layout. */
 .morph-box {
-  will-change: transform;
-  overflow: hidden;
+  will-change: height, transform;
   border-radius: var(--radius-sm);
 }
 
 .morph-box > * {
-  animation: morphContentIn 0.32s var(--ease) 0.08s both;
+  animation: morphContentIn 0.45s var(--ease) 0.12s both;
 }
 
 @keyframes morphContentIn {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -403,6 +403,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   .btn-send {
     transition: none !important;
     transform: none !important;
+    height: auto !important;
   }
 
   .morph-box > * {

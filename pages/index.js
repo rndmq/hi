@@ -693,10 +693,13 @@ export default function Home({ initialMessages }) {
   }
 
   useEffect(() => {
-    // FLIP "Last, Invert, Play": now that React has re-rendered for the new
-    // tab, measure the new layout, work out how far it moved/scaled from the
-    // old one, snap it there instantly via transform, then animate to 0 —
-    // this reads as the box/button *morphing* rather than two panes swapping.
+    // FLIP "Last, Invert, Play" — but animating height (not scaleY) for the
+    // box: text-area -> drop-zone/file-list changes aspect ratio a lot, and
+    // scaling non-uniformly squashes/stretches everything inside it (that's
+    // the "kasar" jank). Animating height directly keeps content undistorted
+    // while the box still visibly grows/shrinks into its new shape. Width
+    // rarely changes (both panels are full-width), so translateX covers the
+    // rare case without needing horizontal scale at all.
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -704,22 +707,30 @@ export default function Home({ initialMessages }) {
       return
     }
 
+    const DURATION = 620
+    const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
+
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
     if (box && prevBox) {
       const next = box.getBoundingClientRect()
       const dx = prevBox.left - next.left
-      const dy = prevBox.top - next.top
-      const sx = prevBox.width / next.width
-      const sy = prevBox.height / next.height
-      box.style.transformOrigin = 'top left'
+
+      box.style.height = `${prevBox.height}px`
+      box.style.transform = `translateX(${dx}px)`
       box.style.transition = 'none'
-      box.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
+      box.style.overflow = 'hidden'
       box.getBoundingClientRect() // force reflow
       requestAnimationFrame(() => {
-        box.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
-        box.style.transform = 'translate(0, 0) scale(1, 1)'
+        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
+        box.style.height = `${next.height}px`
+        box.style.transform = 'translateX(0)'
       })
+      window.clearTimeout(box._morphTO)
+      box._morphTO = window.setTimeout(() => {
+        box.style.height = ''
+        box.style.overflow = ''
+      }, DURATION + 30)
       prevBoxRectRef.current = null
     }
 
@@ -729,14 +740,13 @@ export default function Home({ initialMessages }) {
       const next = btn.getBoundingClientRect()
       const dx = prevBtn.left - next.left
       const dy = prevBtn.top - next.top
-      const sx = prevBtn.width / next.width
       btn.style.transformOrigin = 'left center'
       btn.style.transition = 'none'
-      btn.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, 1)`
+      btn.style.transform = `translate(${dx}px, ${dy}px)`
       btn.getBoundingClientRect()
       requestAnimationFrame(() => {
-        btn.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
-        btn.style.transform = 'translate(0, 0) scale(1, 1)'
+        btn.style.transition = `transform ${DURATION}ms ${EASE}`
+        btn.style.transform = 'translate(0, 0)'
       })
       prevBtnRectRef.current = null
     }
