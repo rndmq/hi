@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import { supabase } from '../lib/supabase'
+import {
+  IconRadar, IconSpark, IconUpload, IconClipboard, IconLink, IconCheck,
+  IconClose, IconWarning, IconEye, IconTrash, IconFolder, IconInbox,
+  IconLaptop, IconPhone, IconDesktop, IconDot, FileIcon
+} from '../components/Icons'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,21 +32,21 @@ function formatTime(iso) {
 }
 
 function getFileIcon(mimeType, fileName) {
-  if (!mimeType && !fileName) return '📎'
+  if (!mimeType && !fileName) return 'generic'
   const ext = fileName?.split('.').pop()?.toLowerCase()
   const mime = mimeType || ''
 
-  if (mime.startsWith('image/')) return '🖼️'
-  if (mime.startsWith('video/')) return '🎬'
-  if (mime.startsWith('audio/')) return '🎵'
-  if (mime.includes('pdf')) return '📄'
-  if (mime.includes('zip') || mime.includes('rar') || ['zip','rar','7z','tar','gz'].includes(ext)) return '🗜️'
-  if (mime.includes('word') || ['doc','docx'].includes(ext)) return '📝'
-  if (mime.includes('sheet') || ['xls','xlsx','csv'].includes(ext)) return '📊'
-  if (mime.includes('presentation') || ['ppt','pptx'].includes(ext)) return '📑'
-  if (['js','ts','py','java','cpp','html','css','json','php','go','rs'].includes(ext)) return '💾'
-  if (['apk'].includes(ext)) return '📱'
-  return '📎'
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime.includes('pdf')) return 'pdf'
+  if (mime.includes('zip') || mime.includes('rar') || ['zip','rar','7z','tar','gz'].includes(ext)) return 'archive'
+  if (mime.includes('word') || ['doc','docx'].includes(ext)) return 'word'
+  if (mime.includes('sheet') || ['xls','xlsx','csv'].includes(ext)) return 'sheet'
+  if (mime.includes('presentation') || ['ppt','pptx'].includes(ext)) return 'slides'
+  if (['js','ts','py','java','cpp','html','css','json','php','go','rs'].includes(ext)) return 'code'
+  if (['apk'].includes(ext)) return 'apk'
+  return 'generic'
 }
 
 function isUrl(text) {
@@ -459,7 +464,7 @@ function CopyButton({ text }) {
 
   return (
     <button className={`msg-copy-btn ${copied ? 'copied' : ''}`} onClick={copy}>
-      {copied ? '✓ Copied' : '⎘ Copy'}
+      {copied ? <><IconCheck size={12} /> Copied</> : <><IconClipboard size={13} /> Copy</>}
     </button>
   )
 }
@@ -475,7 +480,7 @@ function CopyLinkButton({ url }) {
 
   return (
     <button className={`btn-copy-link ${copied ? 'copied' : ''}`} onClick={copy}>
-      {copied ? '✓ Copied' : '🔗 Copy Link'}
+      {copied ? <><IconCheck size={12} /> Copied</> : <><IconLink size={13} /> Copy Link</>}
     </button>
   )
 }
@@ -487,14 +492,14 @@ function DevicePickerModal({ files, devices, onPick, onCancel }) {
   return (
     <div className="device-picker-overlay" onClick={onCancel}>
       <div className="device-picker-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="device-picker-title">📡 Kirim langsung ke device mana?</div>
+        <div className="device-picker-title"><IconRadar size={15} /> Kirim langsung ke device mana?</div>
         <div className="device-picker-desc">
           {files.length > 1 ? `${files.length} file` : files[0]?.name} ({formatBytes(totalSize)}) melebihi {formatBytes(MAX_FILE_SIZE)}, jadi dikirim P2P langsung ke satu device — bukan lewat server. Device tujuan harus online sekarang.
         </div>
         <div className="device-picker-list">
           {devices.map((d) => (
             <button key={d.id} className="device-picker-option" onClick={() => onPick(d)}>
-              {getDeviceClass(d.label) === 'laptop' ? '💻' : getDeviceClass(d.label) === 'phone' ? '📱' : '🖥️'} {d.label}
+              {getDeviceClass(d.label) === 'laptop' ? <IconLaptop size={14} /> : getDeviceClass(d.label) === 'phone' ? <IconPhone size={14} /> : <IconDesktop size={14} />} {d.label}
             </button>
           ))}
         </div>
@@ -534,7 +539,7 @@ function P2PTransferCard({ t, onCancel }) {
           {t.direction === 'send' ? `↑ Kirim ke ${t.deviceLabel}` : `↓ Terima dari ${t.deviceLabel}`}
         </span>
         <span className={`p2p-card-status ${stateClass}`}>
-          {isDone ? '✓ Selesai' : isError ? '✕ Gagal' : t.status === 'connecting' ? 'Connecting...' : `${t.progress}%`}
+          {isDone ? <><IconCheck size={12} /> Selesai</> : isError ? <><IconClose size={12} /> Gagal</> : t.status === 'connecting' ? 'Connecting...' : `${t.progress}%`}
         </span>
       </div>
       <div className="p2p-card-meta">
@@ -542,7 +547,7 @@ function P2PTransferCard({ t, onCancel }) {
         {speedLabel && <> · {speedLabel}</>}
       </div>
       {t.unstable && isActive && (
-        <div className="p2p-card-unstable">⚠️ Koneksi tidak stabil, mencoba pulih...</div>
+        <div className="p2p-card-unstable"><IconWarning size={13} /> Koneksi tidak stabil, mencoba pulih...</div>
       )}
       {isActive && (
         <div className="progress-bar">
@@ -551,7 +556,7 @@ function P2PTransferCard({ t, onCancel }) {
       )}
       {isError && <div className="p2p-card-error-text">{t.error}</div>}
       {isActive && (
-        <button className="p2p-card-cancel" onClick={() => onCancel(t.id)}>✕ Batal</button>
+        <button className="p2p-card-cancel" onClick={() => onCancel(t.id)}><IconClose size={11} /> Batal</button>
       )}
     </div>
   )
@@ -632,7 +637,7 @@ function MessageCard({ msg, onDelete, isNew }) {
               />
             )}
             <div className="file-card" style={{ marginTop: (hasEagerPreview || (isPdf && showPdfPreview)) ? 8 : 0 }}>
-              <span className="file-icon">{getFileIcon(msg.file_type, msg.file_name)}</span>
+              <span className="file-icon"><FileIcon type={getFileIcon(msg.file_type, msg.file_name)} size={20} /></span>
               <div className="file-info">
                 <div className="file-name">{msg.file_name}</div>
                 <div className="file-size">{formatBytes(msg.file_size)}</div>
@@ -640,7 +645,7 @@ function MessageCard({ msg, onDelete, isNew }) {
               <div className="file-actions">
                 {isPdf && (
                   <button className="btn-download" onClick={() => setShowPdfPreview(v => !v)}>
-                    {showPdfPreview ? '✕ Tutup' : '👁 Preview'}
+                    {showPdfPreview ? <><IconClose size={12} /> Tutup</> : <><IconEye size={13} /> Preview</>}
                   </button>
                 )}
                 <button className="btn-download" onClick={handleDownload}>
@@ -664,7 +669,7 @@ function MessageCard({ msg, onDelete, isNew }) {
         )}
       </div>
 
-      <button className="msg-delete-btn" onClick={() => onDelete(msg.id)} title="Delete">✕</button>
+      <button className="msg-delete-btn" onClick={() => onDelete(msg.id)} title="Delete"><IconClose size={12} /></button>
     </div>
   )
 }
@@ -674,6 +679,32 @@ function MessageCard({ msg, onDelete, isNew }) {
 export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
+  const [prevTab, setPrevTab] = useState(null)
+  const [tabDir, setTabDir] = useState('fwd')
+  const tabOrder = { text: 0, file: 1 }
+
+  const switchTab = (next) => {
+    if (next === activeTab) return
+    setTabDir(tabOrder[next] > tabOrder[activeTab] ? 'fwd' : 'back')
+    setPrevTab(activeTab)
+    setActiveTab(next)
+    window.clearTimeout(switchTab._t)
+    switchTab._t = window.setTimeout(() => setPrevTab(null), 340)
+  }
+
+  const paneClass = (name) => {
+    const isCurrent = activeTab === name
+    const isExiting = prevTab === name && activeTab !== name
+    if (!isCurrent && !isExiting) return 'tab-content'
+    const classes = ['tab-content']
+    if (isCurrent) {
+      classes.push('active')
+      if (prevTab) classes.push('tab-enter')
+    } else if (isExiting) {
+      classes.push('active', 'tab-exit')
+    }
+    return classes.join(' ')
+  }
   const [textInput, setTextInput] = useState('')
   const [selectedFiles, setSelectedFiles] = useState([])
   const [deviceLabel, setDeviceLabel] = useState('')
@@ -1235,7 +1266,7 @@ export default function Home({ initialMessages }) {
         <title>LocalShare</title>
         <meta name="description" content="Share files and text between your devices" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>" />
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235eead4'/%3E%3Ccircle cx='12' cy='12' r='7.2' fill='none' stroke='%2306201c' stroke-width='1.8' opacity='0.35'/%3E%3Ccircle cx='12' cy='12' r='4.3' fill='none' stroke='%2306201c' stroke-width='1.8' opacity='0.6'/%3E%3Ccircle cx='12' cy='12' r='1.3' fill='%2306201c'/%3E%3Cpath d='M12 12 L16.7 7.8' stroke='%2306201c' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
       </Head>
 
       <div
@@ -1248,7 +1279,7 @@ export default function Home({ initialMessages }) {
         <header className="header">
           <div className="header-left">
             <div className="logo">
-              <div className="logo-icon">📡</div>
+              <div className="logo-icon"><IconRadar size={20} /></div>
               <span className="logo-text">Local<span>Share</span></span>
             </div>
             <div className="header-status">
@@ -1263,12 +1294,12 @@ export default function Home({ initialMessages }) {
                 className="device-badge"
                 title={onlineDevices.map(d => d.label).join(', ')}
               >
-                🟢 {onlineDevices.length} device online
+                <IconDot size={8} color="var(--signal)" /> {onlineDevices.length} device online
               </div>
             )}
-            <div className="device-badge">📱 {deviceLabel || '...'}</div>
+            <div className="device-badge"><IconPhone size={12} /> {deviceLabel || '...'}</div>
             <button className="btn-clear" onClick={handleClearAll}>
-              🗑 Clear All
+              <IconTrash size={12} /> Clear All
             </button>
           </div>
         </header>
@@ -1277,16 +1308,17 @@ export default function Home({ initialMessages }) {
           {/* Send Panel */}
           <div className="send-panel">
             <div className="tabs">
-              <button className={`tab ${activeTab === 'text' ? 'active' : ''}`} onClick={() => setActiveTab('text')}>
-                ✦ Text / Link
+              <button className={`tab ${activeTab === 'text' ? 'active' : ''}`} onClick={() => switchTab('text')}>
+                <IconSpark size={13} /> Text / Link
               </button>
-              <button className={`tab ${activeTab === 'file' ? 'active' : ''}`} onClick={() => setActiveTab('file')}>
-                ⬆ Upload File
+              <button className={`tab ${activeTab === 'file' ? 'active' : ''}`} onClick={() => switchTab('file')}>
+                <IconUpload size={13} /> Upload File
               </button>
             </div>
 
             {/* Text Tab */}
-            <div className={`tab-content ${activeTab === 'text' ? 'active' : ''}`}>
+            <div className="tab-content-viewport" data-dir={tabDir}>
+            <div className={paneClass('text')}>
               <div className="text-area-wrapper">
                 <textarea
                   placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
@@ -1301,7 +1333,7 @@ export default function Home({ initialMessages }) {
                   onClick={handleClipboardButton}
                   title="Tempel dari clipboard"
                 >
-                  📋
+                  <IconClipboard size={15} />
                 </button>
                 <span className="char-count">{textInput.length}</span>
               </div>
@@ -1326,7 +1358,7 @@ export default function Home({ initialMessages }) {
             </div>
 
             {/* File Tab */}
-            <div className={`tab-content ${activeTab === 'file' ? 'active' : ''}`}>
+            <div className={paneClass('file')}>
               {selectedFiles.length === 0 ? (
                 <div
                   className={`drop-zone ${dragging ? 'dragging' : ''}`}
@@ -1342,7 +1374,7 @@ export default function Home({ initialMessages }) {
                     }}
                     onClick={e => e.stopPropagation()}
                   />
-                  <div className="drop-icon">📂</div>
+                  <div className="drop-icon"><IconFolder size={32} /></div>
                   <div className="drop-text">
                     <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
                   </div>
@@ -1354,7 +1386,7 @@ export default function Home({ initialMessages }) {
                 <div className="selected-files-list">
                   {selectedFiles.map((f, i) => (
                     <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
-                      <span className="selected-file-icon">{getFileIcon(f.type, f.name)}</span>
+                      <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>
                       <div className="selected-file-info">
                         <div className="selected-file-name">{f.name}</div>
                         <div className="selected-file-size">{formatBytes(f.size)}</div>
@@ -1363,7 +1395,7 @@ export default function Home({ initialMessages }) {
                         className="btn-remove-file"
                         onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
                       >
-                        ✕
+                        <IconClose size={11} />
                       </button>
                     </div>
                   ))}
@@ -1415,6 +1447,7 @@ export default function Home({ initialMessages }) {
                     : '↑ Upload File'}
               </button>
             </div>
+            </div>
           </div>
 
           {/* P2P Transfers — hanya tampil kalau ada transfer aktif/baru selesai.
@@ -1442,7 +1475,7 @@ export default function Home({ initialMessages }) {
             <div className="feed">
               {messages.length === 0 ? (
                 <div className="empty-state">
-                  <div className="empty-icon">📭</div>
+                  <div className="empty-icon"><IconInbox size={32} /></div>
                   <div className="empty-text">Belum ada yang dibagikan.<br />Mulai kirim sesuatu!</div>
                 </div>
               ) : (

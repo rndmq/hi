@@ -142,7 +142,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  color: var(--signal-ink);
   box-shadow: 0 4px 14px rgba(94, 234, 212, 0.25);
 }
 
@@ -208,6 +208,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .device-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-2);
@@ -218,6 +221,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .btn-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   font-family: var(--font-mono);
   font-weight: 500;
@@ -355,15 +361,80 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--surface-2);
 }
 
+.tab-content-viewport {
+  position: relative;
+  overflow: hidden;
+}
+
 .tab-content {
   padding: 18px;
   display: none;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .tab-content.active {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+}
+
+/* Slide + fade transition between Text / Upload panes.
+   Direction is driven by data-dir on the viewport:
+   "fwd"  = text -> file  (incoming from right, outgoing to left)
+   "back" = file -> text  (incoming from left, outgoing to right) */
+.tab-content.tab-enter {
+  animation: tabEnter 0.32s var(--ease) forwards;
+}
+
+.tab-content.tab-exit {
+  animation: tabExit 0.32s var(--ease) forwards;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tab-content-viewport[data-dir='fwd'] .tab-enter {
+  --tab-x: 24px;
+}
+
+.tab-content-viewport[data-dir='fwd'] .tab-exit {
+  --tab-x: -24px;
+}
+
+.tab-content-viewport[data-dir='back'] .tab-enter {
+  --tab-x: -24px;
+}
+
+.tab-content-viewport[data-dir='back'] .tab-exit {
+  --tab-x: 24px;
+}
+
+@keyframes tabEnter {
+  from {
+    opacity: 0;
+    transform: translateX(var(--tab-x, 24px));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tabExit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--tab-x, 24px) * -1));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-content.tab-enter,
+  .tab-content.tab-exit {
+    animation: none;
+  }
 }
 
 /* Text input */
@@ -420,7 +491,6 @@ textarea::placeholder {
   background: var(--surface-3);
   border: 1px solid var(--line);
   border-radius: 8px;
-  font-size: 12px;
   cursor: pointer;
   color: var(--text-2);
   transition: all 0.2s var(--ease);
@@ -461,7 +531,9 @@ textarea::placeholder {
 }
 
 .drop-icon {
-  font-size: 30px;
+  display: flex;
+  justify-content: center;
+  color: var(--text-3);
   margin-bottom: 10px;
 }
 
@@ -874,7 +946,8 @@ input[type="text"]::placeholder {
 }
 
 .empty-icon {
-  font-size: 36px;
+  display: flex;
+  justify-content: center;
   margin-bottom: 14px;
   opacity: 0.5;
 }
@@ -999,6 +1072,9 @@ input[type="text"]::placeholder {
 }
 
 .p2p-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
@@ -1017,6 +1093,9 @@ input[type="text"]::placeholder {
 }
 
 .p2p-card-unstable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--orange);
   background: var(--orange-dim);
@@ -1033,6 +1112,9 @@ input[type="text"]::placeholder {
 }
 
 .p2p-card-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 6px;
   background: none;
   border: none;
@@ -1075,6 +1157,9 @@ input[type="text"]::placeholder {
 }
 
 .device-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
