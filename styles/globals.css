@@ -373,20 +373,63 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
    box actually growing/shrinking into its new shape. Animating height
    instead of scaleY keeps the content inside (text, icons) undistorted,
    and it naturally pushes the device-row/button below it down or up in
-   sync since they're just flex siblings reacting to the live layout. */
+   sync since they're just flex siblings reacting to the live layout.
+   position:relative anchors the absolutely-positioned exit pane below. */
 .morph-box {
+  position: relative;
   will-change: height, transform;
   border-radius: var(--radius-sm);
 }
 
-.morph-box > * {
-  animation: morphContentIn 0.45s var(--ease) 0.12s both;
+/* Konten di dalam box (textarea vs drop-zone/file-list) crossfade lewat DUA
+   pane: exit (snapshot tab sebelumnya, dibekukan sesaat lewat exitingTab di
+   JS) dan enter (tab yang aktif sekarang). Exit di-absolute-kan (inset:0)
+   supaya TIDAK ikut menentukan tinggi box — box tetap murni mengikuti
+   tinggi alami pane enter, yang diukur FLIP di JS. Durasi/delay masing-
+   masing datang dari inline style (PANE_EXIT_MS dkk. di komponen), bukan
+   di-hardcode di sini, supaya JS (yang jadwalin unmount pane exit) & CSS
+   (yang menjalankan animasinya) tidak pernah kesimpangan angka.
+   Exit pakai accelerate-curve & lebih cepat (konten lama harus "kabur"
+   duluan); enter pakai decelerate-curve, lebih lambat, plus delay supaya
+   baru muncul menjelang box selesai reshape — bukan crossfade bareng dari
+   awal. Ini yang bikin box terasa "satu keping ubah bentuk", bukan
+   "sesuatu ilang tiba-tiba, muncul sesuatu yang beda". Box sendiri sudah
+   dikasih overflow:hidden inline oleh JS selama window animasi ini
+   berlangsung, jadi pane exit otomatis ke-clip rapi kalau box lagi
+   menyusut — tidak perlu overflow:hidden permanen di sini. */
+.morph-pane-exit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  will-change: opacity, transform;
+  animation-name: morphPaneOut;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  animation-fill-mode: forwards;
 }
 
-@keyframes morphContentIn {
+.morph-pane-enter {
+  will-change: opacity, transform;
+  animation-name: morphPaneIn;
+  animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+
+@keyframes morphPaneOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes morphPaneIn {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(7px);
   }
   to {
     opacity: 1;
@@ -394,7 +437,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   }
 }
 
+/* position:relative + overflow:hidden membungkus label lama/baru (lihat
+   .btn-send-label di bawah) supaya crossfade teksnya rapi terklip kalau
+   lebar tombol berubah drastis (mis. "Uploading 45%..." -> "↑ Kirim"),
+   tanpa memotong box-shadow :hover milik tombol sendiri (box-shadow
+   digambar di luar border box, tidak ikut ke-clip oleh overflow milik
+   elemen yang sama). */
 .btn-send {
+  position: relative;
+  overflow: hidden;
   will-change: transform;
 }
 
@@ -406,8 +457,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
     height: auto !important;
   }
 
-  .morph-box > * {
-    animation: none;
+  .morph-pane-enter,
+  .btn-send-label {
+    animation: none !important;
+  }
+
+  /* exitingTab tidak pernah di-set kalau reduced-motion aktif (lihat
+     switchTab di komponen), jadi .morph-pane-exit/.btn-send-label-exit
+     seharusnya sudah tidak pernah ter-render sama sekali — baris ini
+     cuma jaring pengaman kedua. */
+  .morph-pane-exit,
+  .btn-send-label-exit {
+    display: none !important;
   }
 }
 
@@ -671,6 +732,57 @@ input[type="text"]::placeholder {
   opacity: 0.4;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* Label tombol kirim — crossfade sendiri, terpisah dari morph POSISI badan
+   tombol (itu FLIP di JS, lihat useEffect di komponen). btn-send-label
+   adalah teks yang lagi masuk (normal flow, ikut align-items:center milik
+   .btn-send); btn-send-label-exit adalah snapshot teks lama yang fade-out,
+   di-absolute-kan & disejajarkan manual ke tengah lewat top:50% (translateY
+   -50% dikomposisi dengan translateY animasi supaya dua-duanya jalan
+   bareng tanpa saling menimpa — lihat keyframes di bawah). left:26px
+   sengaja disamakan dengan padding-left .btn-send supaya titik mulainya pas
+   nyambung dengan posisi teks normal. */
+.btn-send-label {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: opacity, transform;
+  animation-name: morphLabelIn;
+  animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+
+.btn-send-label-exit {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  pointer-events: none;
+  will-change: opacity, transform;
+  animation-name: morphLabelOut;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes morphLabelIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes morphLabelOut {
+  from {
+    opacity: 1;
+    transform: translateY(-50%) translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-50%) translateY(-3px) scale(0.96);
+  }
 }
 
 /* Progress bar */
