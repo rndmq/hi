@@ -373,15 +373,22 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   border: none;
   border-radius: 11px;
   cursor: pointer;
-  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+  transition: color 0.2s var(--ease), background 0.2s var(--ease), transform 0.2s var(--ease);
   letter-spacing: 0.1px;
   position: relative;
   z-index: 1; /* di atas .tab-indicator supaya teks/ikon tetap kebaca */
 }
 
+/* .tab-indicator di belakang sudah murni translateX (lihat komentarnya di
+   atas), tapi ikon+teks tab ITU SENDIRI dulu cuma transition color — pill-nya
+   geser, tulisannya cuma menggelap-terang di tempat, jadi separuh area tab
+   masih kerasa "fade" walau pill-nya udah "pindah". -1px sama kayak lift
+   .btn-send:hover di bawah, dipakai ulang di sini biar bahasa geraknya
+   konsisten satu tombol. */
 .tab.active {
   color: var(--signal-ink);
   font-weight: 600;
+  transform: translateY(-1px);
 }
 
 .tab:hover:not(.active) {
