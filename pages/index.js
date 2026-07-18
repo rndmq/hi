@@ -561,7 +561,15 @@ function MessageCard({ msg, onDelete, isNew }) {
   const isFile = msg.type === 'file'
   const isImage = msg.file_type?.startsWith('image/')
   const isVideo = msg.file_type?.startsWith('video/')
+  const isAudio = msg.file_type?.startsWith('audio/')
+  const isPdf = msg.file_type?.includes('pdf') || msg.file_name?.toLowerCase().endsWith('.pdf')
   const deviceClass = getDeviceClass(msg.device_label)
+  const hasEagerPreview = isImage || isVideo || isAudio
+
+  // PDF sengaja TIDAK auto-preview kayak gambar/video — file PDF bisa berat
+  // dan iframe viewer-nya baru mulai ambil seluruh file begitu dirender.
+  // Baru dimuat kalau user tap tombol "Preview".
+  const [showPdfPreview, setShowPdfPreview] = useState(false)
 
   // Fetch+blob agar browser langsung download, bukan buka tab baru
   const handleDownload = async () => {
@@ -608,13 +616,33 @@ function MessageCard({ msg, onDelete, isNew }) {
                 preload="metadata"
               />
             )}
-            <div className="file-card" style={{ marginTop: (isImage || isVideo) ? 8 : 0 }}>
+            {isAudio && (
+              <audio
+                src={msg.content}
+                controls
+                className="audio-preview"
+                preload="metadata"
+              />
+            )}
+            {isPdf && showPdfPreview && (
+              <iframe
+                src={msg.content}
+                className="pdf-preview"
+                title={msg.file_name}
+              />
+            )}
+            <div className="file-card" style={{ marginTop: (hasEagerPreview || (isPdf && showPdfPreview)) ? 8 : 0 }}>
               <span className="file-icon">{getFileIcon(msg.file_type, msg.file_name)}</span>
               <div className="file-info">
                 <div className="file-name">{msg.file_name}</div>
                 <div className="file-size">{formatBytes(msg.file_size)}</div>
               </div>
               <div className="file-actions">
+                {isPdf && (
+                  <button className="btn-download" onClick={() => setShowPdfPreview(v => !v)}>
+                    {showPdfPreview ? '✕ Tutup' : '👁 Preview'}
+                  </button>
+                )}
                 <button className="btn-download" onClick={handleDownload}>
                   ↓ Download
                 </button>
@@ -1075,14 +1103,17 @@ export default function Home({ initialMessages }) {
     }
   }
 
-  // Helper bersama untuk menambahkan file (dari input klik, drag-drop, atau
-  // tombol "tambah file lagi"). File dipecah jadi 2 rute berdasarkan ukuran:
+  // Helper bersama untuk menambahkan file (dari input klik, drag-drop, paste
+  // clipboard, atau tombol "tambah file lagi"). File dipecah jadi 2 rute
+  // berdasarkan ukuran:
   //   - <= MAX_FILE_SIZE: masuk ke selectedFiles seperti biasa (nanti upload
   //     ke Supabase Storage lewat handleSendFile, muncul di feed bersama).
   //   - > MAX_FILE_SIZE: TIDAK pernah masuk selectedFiles / Storage sama
   //     sekali. Langsung dialihkan ke routeBigFilesToP2P buat dikirim
   //     peer-to-peer ke satu device tujuan.
-  const addFiles = (newFiles) => {
+  // Dibungkus useCallback (referensinya stabil) supaya bisa dipakai aman di
+  // dependency array useEffect paste handler di bawah.
+  const addFiles = useCallback((newFiles) => {
     const tooBig = newFiles.filter(f => f.size > MAX_FILE_SIZE)
     const ok = newFiles.filter(f => f.size <= MAX_FILE_SIZE)
 
@@ -1092,7 +1123,7 @@ export default function Home({ initialMessages }) {
     if (tooBig.length > 0) {
       routeBigFilesToP2P(tooBig)
     }
-  }
+  }, [routeBigFilesToP2P])
 
   const handleFileDrop = (e) => {
     e.preventDefault()
@@ -1118,6 +1149,34 @@ export default function Home({ initialMessages }) {
       console.warn('File kosong atau gagal dibaca')
     }
   }
+
+  // Paste dari clipboard (Ctrl+V / Cmd+V) — kalau isinya gambar/file (bukan
+  // teks biasa, misal abis screenshot terus langsung paste tanpa save dulu),
+  // otomatis kedetect sebagai file dan dialihkan lewat jalur yang sama kayak
+  // drag-drop, alih-alih ke-paste sebagai teks biasa di textarea. Listener
+  // global (document-level) supaya paste-nya kedeteksi di mana pun fokusnya
+  // lagi berada, bukan cuma pas lagi klik di textarea.
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      const pastedFiles = Array.from(items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter(Boolean)
+
+      if (pastedFiles.length === 0) return // teks biasa — biarkan paste default jalan
+
+      e.preventDefault()
+      addFiles(pastedFiles)
+      setActiveTab('file')
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [addFiles])
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleSendText()
@@ -1153,6 +1212,14 @@ export default function Home({ initialMessages }) {
           </div>
 
           <div className="header-right">
+            {onlineDevices.length > 0 && (
+              <div
+                className="device-badge"
+                title={onlineDevices.map(d => d.label).join(', ')}
+              >
+                🟢 {onlineDevices.length} device online
+              </div>
+            )}
             <div className="device-badge">📱 {deviceLabel || '...'}</div>
             <button className="btn-clear" onClick={handleClearAll}>
               🗑 Clear All
