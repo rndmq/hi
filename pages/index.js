@@ -713,14 +713,24 @@ export default function Home({ initialMessages }) {
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
     if (box && prevBox) {
+      // Measure the box's true natural height for the NEW content first.
+      // React has already committed the new children by the time this
+      // effect runs, but the box may still be carrying an explicit height
+      // (or overflow clipping) left over from a previous morph — reading
+      // getBoundingClientRect() without clearing that first can return a
+      // stale/incorrect number, which is what caused the "finishes, then
+      // suddenly snaps" glitch (the animated target didn't match the real
+      // layout, so releasing back to auto at the end jumped).
+      box.style.transition = 'none'
+      box.style.height = 'auto'
+      box.style.transform = 'translateX(0)'
       const next = box.getBoundingClientRect()
       const dx = prevBox.left - next.left
 
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
-      box.style.transition = 'none'
       box.style.overflow = 'hidden'
-      box.getBoundingClientRect() // force reflow
+      box.getBoundingClientRect() // force reflow so the jump above isn't animated
       requestAnimationFrame(() => {
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
         box.style.height = `${next.height}px`
@@ -728,8 +738,14 @@ export default function Home({ initialMessages }) {
       })
       window.clearTimeout(box._morphTO)
       box._morphTO = window.setTimeout(() => {
-        box.style.height = ''
+        // Hand height back to 'auto' so content added/removed later (more
+        // files picked, textarea resized) still grows the box naturally —
+        // but do it in two steps with no transition, so the switch from
+        // "620ms-eased fixed pixel value" to "auto" is invisible: the auto
+        // height at this point measures out to the exact same number.
+        box.style.transition = 'none'
         box.style.overflow = ''
+        box.style.height = 'auto'
       }, DURATION + 30)
       prevBoxRectRef.current = null
     }
