@@ -1177,6 +1177,52 @@ export default function Home({ initialMessages }) {
     return () => document.removeEventListener('paste', handlePaste)
   }, [addFiles])
 
+  // Tempel manual lewat Clipboard API (dipicu tombol, bukan event paste
+  // otomatis). Ini user-gesture asli, jadi bisa akses clipboard system
+  // langsung — gak kena blokir popup clipboard bawaan Android yang kadang
+  // nolak nempelin gambar ke textarea biasa (lihat komentar di handlePaste
+  // effect di atas). Kalau isinya gambar, otomatis dialihkan ke tab file
+  // sama kayak handlePaste; kalau teks, disisipkan ke textInput.
+  const handleClipboardButton = useCallback(async () => {
+    if (!navigator.clipboard?.read) {
+      showToast('Browser ini tidak mendukung akses clipboard langsung', 'error')
+      return
+    }
+    try {
+      const clipboardItems = await navigator.clipboard.read()
+      const imageFiles = []
+      let pastedText = ''
+
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(t => t.startsWith('image/'))
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          const ext = imageType.split('/')[1] || 'png'
+          imageFiles.push(new File([blob], `clipboard-${Date.now()}.${ext}`, { type: imageType }))
+          continue
+        }
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain')
+          pastedText = await blob.text()
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        addFiles(imageFiles)
+        setActiveTab('file')
+        showToast('Gambar ditempel dari clipboard', 'success')
+      } else if (pastedText) {
+        setTextInput(prev => prev + pastedText)
+        showToast('Teks ditempel dari clipboard', 'success')
+      } else {
+        showToast('Clipboard kosong atau formatnya tidak didukung', 'error')
+      }
+    } catch (err) {
+      console.warn('Clipboard read gagal:', err)
+      showToast('Gak bisa akses clipboard — coba tekan lama lalu pilih Tempel', 'error')
+    }
+  }, [addFiles, showToast])
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleSendText()
@@ -1249,6 +1295,14 @@ export default function Home({ initialMessages }) {
                   onKeyDown={handleKeyDown}
                   rows={4}
                 />
+                <button
+                  type="button"
+                  className="btn-paste-clipboard"
+                  onClick={handleClipboardButton}
+                  title="Tempel dari clipboard"
+                >
+                  📋
+                </button>
                 <span className="char-count">{textInput.length}</span>
               </div>
 
