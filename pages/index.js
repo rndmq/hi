@@ -1554,6 +1554,7 @@ export default function Home({ initialMessages }) {
           {/* Send Panel */}
           <div className="send-panel">
             <div className="tabs">
+              <div className={`tab-indicator ${activeTab === 'file' ? 'is-file' : ''}`} aria-hidden="true" />
               <button className={`tab ${activeTab === 'text' ? 'active' : ''}`} onClick={() => switchTab('text')}>
                 <IconSpark size={13} /> Text / Link
               </button>
