@@ -214,7 +214,18 @@ const ICE_SERVERS = [
 // tetap dibatasi bandwidth koneksi, bukan ukuran chunk-nya.
 const P2P_CHUNK_SIZE = 64 * 1024 // 64KB
 const P2P_BUFFERED_AMOUNT_LOW = 1 * 1024 * 1024 // 1MB — ambang buat nunggu buffer ngosong dulu
-const P2P_CONNECT_TIMEOUT_MS = 20000 // batas waktu nunggu koneksi P2P kebentuk
+const P2P_CONNECT_TIMEOUT_MS = 20000 // batas waktu nunggu koneksi P2P kebentuk pertama kali
+// Begitu koneksi sempat 'connected' lalu jadi 'disconnected' (WiFi kedip, HP
+// pindah channel/layar lock sebentar, dst), ICE tetap nyoba connectivity
+// check di background dan SERING pulih sendiri tanpa perlu apa-apa. Kasih
+// waktu segini dulu sebelum benar-benar dianggap gagal, supaya gangguan
+// sesaat nggak langsung membatalkan transfer yang lagi jalan.
+const P2P_DISCONNECT_GRACE_MS = 12000
+// Update progress paling sering tiap segini ms — tanpa ini, progress
+// ke-update di SETIAP chunk (ribuan kali buat file besar), bikin React
+// re-render kebanyakan dan malah ikut memperlambat transfer, apalagi di HP
+// yang CPU-nya lebih lemah.
+const P2P_PROGRESS_THROTTLE_MS = 150
 
 function createP2PPeerConnection() {
   return new RTCPeerConnection({ iceServers: ICE_SERVERS })
@@ -236,90 +247,155 @@ function waitForIceGatheringComplete(pc) {
   })
 }
 
-// Kasih feedback error yang jelas kalau koneksi P2P gagal terbentuk atau
-// putus di tengah jalan. Mengembalikan id timeout-nya — pemanggil WAJIB
-// clearTimeout() manual begitu koneksi berhasil kepakai (lihat pemakaian di
-// dc.onopen / pc.ondatachannel), supaya tidak salah nembak error timeout
-// padahal transfer-nya sebenarnya sukses.
+// Bikin fungsi onProgress yang di-throttle — dipanggil terus di setiap
+// chunk, tapi cuma benar-benar meneruskan ke updateTransfer() paling sering
+// tiap P2P_PROGRESS_THROTTLE_MS, KECUALI saat sudah 100% (biar progress bar
+// selalu berakhir pas di penuh, tidak nanggung di update yang ke-skip).
+function createProgressThrottle(onProgress) {
+  let lastCall = 0
+  return (loaded, total) => {
+    const now = Date.now()
+    if (loaded >= total || now - lastCall >= P2P_PROGRESS_THROTTLE_MS) {
+      lastCall = now
+      onProgress(loaded, total)
+    }
+  }
+}
+
+// Kasih feedback yang jelas kalau koneksi P2P gagal terbentuk atau putus di
+// tengah jalan — tapi bedain 'disconnected' (sering cuma sementara, dikasih
+// masa tenggang lewat P2P_DISCONNECT_GRACE_MS dulu sebelum dianggap gagal)
+// dari 'failed'/'closed' (memang sudah pasti mati, langsung dianggap gagal).
+// Sebelumnya ketiganya diperlakukan sama — itu yang bikin gangguan jaringan
+// SESAAT (HP layar lock bentar, WiFi kedip) langsung membatalkan transfer
+// padahal ICE-nya sendiri sering masih bisa pulih kalau dikasih waktu.
+//
+// Mengembalikan fungsi cleanup — pemanggil WAJIB memanggilnya begitu koneksi
+// berhasil kepakai (lihat pemakaian di dc.onopen / pc.ondatachannel), supaya
+// tidak salah nembak error timeout padahal transfer-nya sebenarnya sukses.
 function attachP2PWatchdog(pc, transferId, updateTransfer) {
-  const timeoutId = setTimeout(() => {
+  const connectTimeoutId = setTimeout(() => {
     updateTransfer(transferId, {
       status: 'error',
       error: 'Koneksi P2P timeout. Pastikan device tujuan online & tab LocalShare-nya masih terbuka.',
     })
   }, P2P_CONNECT_TIMEOUT_MS)
 
+  let disconnectGraceId = null
+
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') {
-      clearTimeout(timeoutId)
-    } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-      clearTimeout(timeoutId)
+      clearTimeout(connectTimeoutId)
+      if (disconnectGraceId) {
+        clearTimeout(disconnectGraceId)
+        disconnectGraceId = null
+        updateTransfer(transferId, { unstable: false })
+      }
+    } else if (pc.connectionState === 'disconnected') {
+      clearTimeout(connectTimeoutId)
+      if (!disconnectGraceId) {
+        updateTransfer(transferId, { unstable: true })
+        disconnectGraceId = setTimeout(() => {
+          updateTransfer(transferId, {
+            status: 'error',
+            unstable: false,
+            error: 'Koneksi P2P terputus (device tujuan mungkin kehilangan sinyal/pindah jaringan) dan tidak pulih.',
+          })
+        }, P2P_DISCONNECT_GRACE_MS)
+      }
+    } else if (['failed', 'closed'].includes(pc.connectionState)) {
+      clearTimeout(connectTimeoutId)
+      if (disconnectGraceId) clearTimeout(disconnectGraceId)
       updateTransfer(transferId, {
         status: 'error',
+        unstable: false,
         error: 'Koneksi P2P terputus atau gagal dibuat (kemungkinan diblokir NAT/firewall).',
       })
     }
   }
 
-  return timeoutId
+  return () => {
+    clearTimeout(connectTimeoutId)
+    if (disconnectGraceId) clearTimeout(disconnectGraceId)
+  }
 }
 
 // Kirim file lewat DataChannel dalam potongan kecil, dengan backpressure:
 // kalau dc.bufferedAmount masih tinggi, tunggu event 'bufferedamountlow' dulu
 // sebelum lanjut kirim chunk berikutnya. Tanpa ini, file besar bisa bikin
 // buffer membengkak tak terkendali dan koneksi jadi tidak stabil/macet.
+//
+// Beda dari versi sebelumnya: chunk BERIKUTNYA mulai dibaca dari disk DI
+// BELAKANG LAYAR sambil chunk SEKARANG masih dikirim/nunggu backpressure —
+// bukan baca-dulu-baru-kirim-baru-baca-lagi berurutan. Waktu baca & waktu
+// kirim jadi saling tumpang tindih alih-alih gantian nunggu satu-satu, yang
+// tadinya nambah overhead nyata buat file besar (ribuan chunk = ribuan kali
+// nunggu baca selesai sebelum sempat mulai kirim). Pakai Blob.arrayBuffer()
+// (Promise asli) bukan FileReader (API berbasis event yang lebih lama),
+// supaya alurnya lebih simpel di-pipeline seperti ini.
+//
+// Cancel ditangani dari luar lewat pc.close() (lihat cancelTransfer) — begitu
+// koneksi ditutup, dc.send() berikutnya melempar error, ketangkep di catch
+// di bawah, dan promise-nya reject. Kartu transfer-nya sendiri sudah lebih
+// dulu hilang dari UI karena cancelTransfer langsung memfilternya dari
+// state, jadi reject ini tidak perlu ditangani khusus di sini.
 function sendFileOverDataChannel(dc, file, onProgress) {
   return new Promise((resolve, reject) => {
     dc.bufferedAmountLowThreshold = P2P_BUFFERED_AMOUNT_LOW
-    let offset = 0
-    const reader = new FileReader()
 
-    function readNextChunk() {
-      if (offset >= file.size) {
-        try {
-          dc.send(JSON.stringify({ type: 'done' }))
-          resolve()
-        } catch (e) {
-          reject(e)
-        }
-        return
-      }
-      reader.readAsArrayBuffer(file.slice(offset, offset + P2P_CHUNK_SIZE))
+    function readChunk(start) {
+      const end = Math.min(start + P2P_CHUNK_SIZE, file.size)
+      return file.slice(start, end).arrayBuffer()
     }
 
-    reader.onerror = () => reject(new Error('Gagal membaca file dari disk'))
-    reader.onload = () => {
-      const chunk = reader.result
+    async function pump() {
       try {
-        dc.send(chunk)
-      } catch (e) {
-        reject(new Error('Gagal mengirim chunk: ' + e.message))
-        return
-      }
-      offset += chunk.byteLength
-      onProgress(offset, file.size)
+        let offset = 0
+        let nextChunkPromise = offset < file.size ? readChunk(offset) : null
 
-      if (dc.bufferedAmount > P2P_BUFFERED_AMOUNT_LOW) {
-        dc.onbufferedamountlow = () => {
-          dc.onbufferedamountlow = null
-          readNextChunk()
+        while (offset < file.size) {
+          const chunk = await nextChunkPromise
+
+          const nextOffset = offset + chunk.byteLength
+          // Mulai baca chunk berikutnya SEKARANG, sebelum chunk ini dikirim
+          // atau sebelum nunggu backpressure — ini inti dari overlap-nya.
+          nextChunkPromise = nextOffset < file.size ? readChunk(nextOffset) : null
+
+          dc.send(chunk)
+          offset = nextOffset
+          onProgress(offset, file.size)
+
+          if (dc.bufferedAmount > P2P_BUFFERED_AMOUNT_LOW) {
+            await new Promise((res) => {
+              dc.onbufferedamountlow = () => {
+                dc.onbufferedamountlow = null
+                res()
+              }
+            })
+          }
         }
-      } else {
-        readNextChunk()
+
+        dc.send(JSON.stringify({ type: 'done' }))
+        resolve()
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error('Gagal membaca/mengirim file: ' + e))
       }
     }
 
     // Pesan pertama: metadata (JSON teks) supaya penerima tahu nama/ukuran/
     // tipe file sebelum chunk biner pertama datang.
     dc.send(JSON.stringify({ type: 'meta', name: file.name, size: file.size, mimeType: file.type }))
-    readNextChunk()
+    pump()
   })
 }
 
 // Pasang handler di DataChannel milik penerima: kumpulkan chunk biner ke
 // array, dan proses 2 jenis pesan kontrol (JSON teks): 'meta' di awal,
 // 'done' di akhir yang memicu penggabungan semua chunk jadi satu Blob.
+// onProgress otomatis di-throttle (lihat createProgressThrottle) supaya
+// tidak trigger re-render React di SETIAP chunk yang masuk.
 function attachP2PReceiver(dc, { onMeta, onProgress, onComplete, onError }) {
+  const throttledProgress = createProgressThrottle(onProgress)
   let meta = null
   let chunks = []
   let receivedBytes = 0
@@ -344,7 +420,7 @@ function attachP2PReceiver(dc, { onMeta, onProgress, onComplete, onError }) {
     }
     chunks.push(e.data)
     receivedBytes += e.data.byteLength ?? e.data.size ?? 0
-    if (meta) onProgress(receivedBytes, meta.size)
+    if (meta) throttledProgress(receivedBytes, meta.size)
   }
 }
 
@@ -438,6 +514,19 @@ function P2PTransferCard({ t, onCancel }) {
   const isActive = !isDone && !isError
   const stateClass = isDone ? 'done' : isError ? 'error' : ''
 
+  // Kecepatan dihitung dari total byte terkirim/terima sejak startTime —
+  // rata-rata sejak awal, bukan instan per-detik, tapi cukup buat kasih
+  // gambaran "ini normal atau kelamaan" tanpa nambah state/timer terpisah.
+  // Baru ditampilkan begitu sudah lewat ~0.5 detik biar angkanya tidak
+  // meloncat-loncat di tick pertama.
+  let speedLabel = null
+  if (isActive && t.startTime && t.loadedBytes > 0) {
+    const elapsedSec = (Date.now() - t.startTime) / 1000
+    if (elapsedSec > 0.5) {
+      speedLabel = `${formatBytes(t.loadedBytes / elapsedSec)}/s`
+    }
+  }
+
   return (
     <div className={`p2p-card ${stateClass}`}>
       <div className="p2p-card-top">
@@ -448,7 +537,13 @@ function P2PTransferCard({ t, onCancel }) {
           {isDone ? '✓ Selesai' : isError ? '✕ Gagal' : t.status === 'connecting' ? 'Connecting...' : `${t.progress}%`}
         </span>
       </div>
-      <div className="p2p-card-meta">{t.fileName} · {formatBytes(t.fileSize)}</div>
+      <div className="p2p-card-meta">
+        {t.fileName} · {formatBytes(t.fileSize)}
+        {speedLabel && <> · {speedLabel}</>}
+      </div>
+      {t.unstable && isActive && (
+        <div className="p2p-card-unstable">⚠️ Koneksi tidak stabil, mencoba pulih...</div>
+      )}
       {isActive && (
         <div className="progress-bar">
           <div className="progress-fill" style={{ width: `${t.progress}%` }} />
@@ -678,21 +773,24 @@ export default function Home({ initialMessages }) {
 
     addTransfer({
       id: transferId, direction: 'receive', deviceLabel: fromLabel,
-      fileName, fileSize, progress: 0, status: 'connecting',
+      fileName, fileSize, progress: 0, loadedBytes: 0, status: 'connecting',
     })
 
-    const watchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
+    const clearWatchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
 
     pc.ondatachannel = (e) => {
       const dc = e.channel
       dc.binaryType = 'arraybuffer'
       attachP2PReceiver(dc, {
         onMeta: () => {
-          clearTimeout(watchdog)
-          updateTransfer(transferId, { status: 'receiving' })
+          clearWatchdog()
+          updateTransfer(transferId, { status: 'receiving', startTime: Date.now() })
         },
         onProgress: (loaded, total) => {
-          updateTransfer(transferId, { progress: total > 0 ? Math.round((loaded / total) * 100) : 0 })
+          updateTransfer(transferId, {
+            progress: total > 0 ? Math.round((loaded / total) * 100) : 0,
+            loadedBytes: loaded,
+          })
         },
         onComplete: (blob, meta) => {
           updateTransfer(transferId, { status: 'done', progress: 100 })
@@ -718,7 +816,7 @@ export default function Home({ initialMessages }) {
         payload: { transferId, toId: fromId, sdp: pc.localDescription },
       })
     } catch (e) {
-      clearTimeout(watchdog)
+      clearWatchdog()
       updateTransfer(transferId, { status: 'error', error: 'Gagal membuat jawaban P2P: ' + e.message })
     }
   }, [addTransfer, updateTransfer, showToast])
@@ -778,18 +876,19 @@ export default function Home({ initialMessages }) {
 
     addTransfer({
       id: transferId, direction: 'send', deviceLabel: targetDevice.label,
-      fileName: file.name, fileSize: file.size, progress: 0, status: 'connecting',
+      fileName: file.name, fileSize: file.size, progress: 0, loadedBytes: 0, status: 'connecting',
     })
 
-    const watchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
+    const clearWatchdog = attachP2PWatchdog(pc, transferId, updateTransfer)
 
     dc.onopen = async () => {
-      clearTimeout(watchdog)
-      updateTransfer(transferId, { status: 'sending' })
+      clearWatchdog()
+      updateTransfer(transferId, { status: 'sending', startTime: Date.now() })
       try {
-        await sendFileOverDataChannel(dc, file, (loaded, total) => {
-          updateTransfer(transferId, { progress: Math.round((loaded / total) * 100) })
+        const throttledProgress = createProgressThrottle((loaded, total) => {
+          updateTransfer(transferId, { progress: Math.round((loaded / total) * 100), loadedBytes: loaded })
         })
+        await sendFileOverDataChannel(dc, file, throttledProgress)
         updateTransfer(transferId, { status: 'done', progress: 100 })
         showToast(`File terkirim langsung ke ${targetDevice.label}!`)
       } catch (e) {
@@ -820,7 +919,7 @@ export default function Home({ initialMessages }) {
         },
       })
     } catch (e) {
-      clearTimeout(watchdog)
+      clearWatchdog()
       updateTransfer(transferId, { status: 'error', error: 'Gagal membuat tawaran P2P: ' + e.message })
     }
   }, [addTransfer, updateTransfer, showToast, deviceLabel])
@@ -955,7 +1054,9 @@ export default function Home({ initialMessages }) {
   const handleDelete = async (id) => {
     try {
       const res = await fetch(`/api/messages?id=${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Delete failed')
+      const body = await safeParseResponse(res)
+      if (!res.ok) throw new Error(body.error || 'Delete failed')
+      if (body.warning) showToast(body.warning, 'error')
     } catch (e) {
       showToast(e.message, 'error')
     }
@@ -965,9 +1066,10 @@ export default function Home({ initialMessages }) {
     if (!confirm('Clear semua pesan?')) return
     try {
       const res = await fetch('/api/clear', { method: 'DELETE' })
-      if (!res.ok) throw new Error('Clear failed')
+      const body = await safeParseResponse(res)
+      if (!res.ok) throw new Error(body.error || 'Clear failed')
       setMessages([])
-      showToast('Semua pesan dihapus')
+      showToast(body.warning || 'Semua pesan dihapus', body.warning ? 'error' : 'success')
     } catch (e) {
       showToast(e.message, 'error')
     }

@@ -894,6 +894,15 @@ input[type="text"]::placeholder {
   margin-bottom: 8px;
 }
 
+.p2p-card-unstable {
+  font-size: 11px;
+  color: var(--orange);
+  background: var(--orange-dim);
+  border-radius: 5px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+
 .p2p-card-error-text {
   font-size: 11px;
   color: var(--red);
