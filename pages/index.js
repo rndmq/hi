@@ -702,16 +702,7 @@ const BOX_MORPH_EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
 
 const PANE_EXIT_MS = 170
 const PANE_ENTER_MS = 280
-// Delay ini dulu 300ms — exit kelar di 170ms, enter baru mulai di 300ms,
-// jadi ada jeda ~130ms box KOSONG (nyaris gak ada konten sama sekali,
-// cuma reshape doang) sebelum konten baru mulai masuk. Jeda kosong itu yang
-// bikin transisinya kebaca "fade" walau sebenarnya translateY murni: mata
-// nangkepnya sebagai "ilang dulu... jeda... baru muncul", bukan "geser
-// langsung". Diperkecil ke 30ms supaya enter mulai SELAGI exit masih jalan
-// (tumpang tindih ~140ms) — pane lama & baru sama-sama translateY ke atas
-// bergantian kayak roll odometer, konten hampir selalu ada yang kelihatan
-// bergerak, gak pernah kosong. Total settle jadi ~310ms (dari 580ms).
-const PANE_ENTER_DELAY_MS = 30
+const PANE_ENTER_DELAY_MS = 300 // selesai ~580ms, sebelum box settle di 620ms
 
 const LABEL_EXIT_MS = 130
 const LABEL_ENTER_MS = 200
