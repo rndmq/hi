@@ -332,6 +332,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   gap: 4px;
   padding: 6px;
   border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+/* Sliding pill behind the tab buttons — a plain CSS transform transition
+   between two fixed slots (there are only ever 2 tabs, each flex:1 and
+   equal width), so unlike the height morph above there's no JS measuring
+   involved and nothing that can race/snap. */
+.tab-indicator {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: calc(50% - 8px);
+  height: calc(100% - 12px);
+  background: var(--signal);
+  border-radius: 11px;
+  transition: transform 0.45s cubic-bezier(0.65, 0, 0.35, 1);
+  transform: translateX(0);
+}
+
+.tab-indicator-file {
+  transform: translateX(calc(100% + 4px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-indicator {
+    transition: none;
+  }
 }
 
 .tab {
@@ -345,20 +372,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   border: none;
   border-radius: 11px;
   cursor: pointer;
-  transition: all 0.2s var(--ease);
+  transition: color 0.25s var(--ease);
   letter-spacing: 0.1px;
   position: relative;
+  z-index: 1;
 }
 
 .tab.active {
   color: var(--signal-ink);
-  background: var(--signal);
   font-weight: 600;
 }
 
 .tab:hover:not(.active) {
   color: var(--text);
-  background: var(--surface-2);
 }
 
 .morph-panel {

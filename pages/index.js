@@ -697,9 +697,7 @@ export default function Home({ initialMessages }) {
     // box: text-area -> drop-zone/file-list changes aspect ratio a lot, and
     // scaling non-uniformly squashes/stretches everything inside it (that's
     // the "kasar" jank). Animating height directly keeps content undistorted
-    // while the box still visibly grows/shrinks into its new shape. Width
-    // rarely changes (both panels are full-width), so translateX covers the
-    // rare case without needing horizontal scale at all.
+    // while the box still visibly grows/shrinks into its new shape.
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -713,14 +711,6 @@ export default function Home({ initialMessages }) {
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
     if (box && prevBox) {
-      // Measure the box's true natural height for the NEW content first.
-      // React has already committed the new children by the time this
-      // effect runs, but the box may still be carrying an explicit height
-      // (or overflow clipping) left over from a previous morph — reading
-      // getBoundingClientRect() without clearing that first can return a
-      // stale/incorrect number, which is what caused the "finishes, then
-      // suddenly snaps" glitch (the animated target didn't match the real
-      // layout, so releasing back to auto at the end jumped).
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
@@ -731,22 +721,42 @@ export default function Home({ initialMessages }) {
       box.style.transform = `translateX(${dx}px)`
       box.style.overflow = 'hidden'
       box.getBoundingClientRect() // force reflow so the jump above isn't animated
+
+      const onTransitionEnd = (e) => {
+        if (e.target !== box || e.propertyName !== 'height') return
+        box.removeEventListener('transitionend', onTransitionEnd)
+        // Instead of trusting the pixel value we animated to, re-measure
+        // 'auto' right now and only THEN release — if there's any mismatch
+        // (subpixel rounding, a reflow that happened mid-transition), this
+        // sets the exact current auto height first with no transition, so
+        // the visual result is identical to what's on screen; only *after*
+        // that do we hand off to 'auto' for live responsiveness. Both steps
+        // use the same measured number, so there is nothing left to snap.
+        box.style.transition = 'none'
+        box.style.transform = 'translateX(0)'
+        const settled = box.getBoundingClientRect().height
+        box.style.height = `${settled}px`
+        box.style.overflow = ''
+        requestAnimationFrame(() => {
+          box.style.height = 'auto'
+        })
+      }
+      box.addEventListener('transitionend', onTransitionEnd)
+      window.clearTimeout(box._morphFallbackTO)
+      // Safety net in case transitionend never fires (e.g. tab switched
+      // again mid-animation and interrupted it) so we don't get stuck.
+      box._morphFallbackTO = window.setTimeout(() => {
+        box.removeEventListener('transitionend', onTransitionEnd)
+        box.style.transition = 'none'
+        box.style.overflow = ''
+        box.style.height = 'auto'
+      }, DURATION + 200)
+
       requestAnimationFrame(() => {
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
         box.style.height = `${next.height}px`
         box.style.transform = 'translateX(0)'
       })
-      window.clearTimeout(box._morphTO)
-      box._morphTO = window.setTimeout(() => {
-        // Hand height back to 'auto' so content added/removed later (more
-        // files picked, textarea resized) still grows the box naturally —
-        // but do it in two steps with no transition, so the switch from
-        // "620ms-eased fixed pixel value" to "auto" is invisible: the auto
-        // height at this point measures out to the exact same number.
-        box.style.transition = 'none'
-        box.style.overflow = ''
-        box.style.height = 'auto'
-      }, DURATION + 30)
       prevBoxRectRef.current = null
     }
 
@@ -1371,6 +1381,7 @@ export default function Home({ initialMessages }) {
           {/* Send Panel */}
           <div className="send-panel">
             <div className="tabs">
+              <div className={`tab-indicator ${activeTab === 'file' ? 'tab-indicator-file' : ''}`} />
               <button className={`tab ${activeTab === 'text' ? 'active' : ''}`} onClick={() => switchTab('text')}>
                 <IconSpark size={13} /> Text / Link
               </button>
