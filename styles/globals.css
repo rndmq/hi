@@ -458,6 +458,34 @@ textarea:focus {
   background: var(--surface-3);
 }
 
+/* Neon "warming up" effect: after the box finishes morphing into the Text
+   tab, the textarea's border/glow doesn't just snap to its signal color —
+   it flickers up gradually like a neon tube reaching full brightness.
+   Triggered from JS by toggling this class on; it removes itself when
+   the animation ends so it doesn't fight with the normal :focus state. */
+textarea.neon-startup {
+  animation: neonWarmup 1.1s ease-out both;
+}
+
+@keyframes neonWarmup {
+  0%   { border-color: var(--line); box-shadow: none; }
+  8%   { border-color: var(--signal); box-shadow: 0 0 9px 0 var(--signal-dim); }
+  14%  { border-color: var(--line); box-shadow: none; }
+  22%  { border-color: var(--signal); box-shadow: 0 0 10px 0 var(--signal-dim); }
+  28%  { border-color: var(--line-2); box-shadow: none; }
+  38%  { border-color: var(--signal); box-shadow: 0 0 12px 1px var(--signal-dim); }
+  46%  { border-color: var(--signal); box-shadow: 0 0 4px 0 var(--signal-dim-2); }
+  60%  { border-color: var(--signal); box-shadow: 0 0 16px 2px var(--signal-dim); }
+  100% { border-color: var(--signal); box-shadow: 0 0 18px 2px var(--signal-dim); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  textarea.neon-startup {
+    animation: none;
+    border-color: var(--signal);
+  }
+}
+
 textarea::placeholder {
   color: var(--text-3);
 }

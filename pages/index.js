@@ -682,6 +682,7 @@ export default function Home({ initialMessages }) {
   const morphBoxRef = useRef(null)
   const sendBtnRef = useRef(null)
   const deviceRowRef = useRef(null)
+  const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
   const prevBtnRectRef = useRef(null)
   const prevRowRectRef = useRef(null)
@@ -757,6 +758,26 @@ export default function Home({ initialMessages }) {
         requestAnimationFrame(() => {
           box.style.height = 'auto'
         })
+
+        // Neon warm-up: only relevant for the Text tab (the textarea is the
+        // element with the neon border). A short pause after the box has
+        // physically settled into shape, then the border flickers up to
+        // full brightness like a tube starting up.
+        const ta = textareaRef.current
+        if (ta && activeTab === 'text') {
+          ta.classList.remove('neon-startup')
+          void ta.offsetWidth // restart the animation if it's already mid-flight
+          window.clearTimeout(box._neonTO)
+          box._neonTO = window.setTimeout(() => {
+            ta.classList.add('neon-startup')
+            const onNeonEnd = (ev) => {
+              if (ev.target !== ta) return
+              ta.classList.remove('neon-startup')
+              ta.removeEventListener('animationend', onNeonEnd)
+            }
+            ta.addEventListener('animationend', onNeonEnd)
+          }, 160)
+        }
       }
       box.addEventListener('transitionend', onTransitionEnd)
       window.clearTimeout(box._morphFallbackTO)
@@ -1457,12 +1478,12 @@ export default function Home({ initialMessages }) {
                 {activeTab === 'text' ? (
                   <div className="text-area-wrapper">
                     <textarea
+                      ref={textareaRef}
                       placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
                       value={textInput}
                       onChange={e => setTextInput(e.target.value)}
                       onKeyDown={handleKeyDown}
                       rows={4}
-                      autoFocus
                     />
                     <button
                       type="button"
