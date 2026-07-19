@@ -720,7 +720,21 @@ export default function Home({ initialMessages }) {
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
       box.style.overflow = 'hidden'
-      box.getBoundingClientRect() // force reflow so the jump above isn't animated
+
+      // The new content (textarea <-> drop-zone/file-list) must NOT fade in
+      // on its own timeline — it needs to stay invisible until the box has
+      // actually grown/shrunk into roughly its new shape, otherwise you get
+      // "content pops in first, box catches up after" instead of a single
+      // morph. So: hide it here, force reflow, then only start its fade
+      // once the box's own height transition is most of the way through.
+      const content = box.firstElementChild
+      if (content) {
+        window.clearTimeout(box._contentTO)
+        content.style.transition = 'none'
+        content.style.opacity = '0'
+        content.style.transform = 'translateY(6px)'
+      }
+      box.getBoundingClientRect() // force reflow so the jumps above aren't animated
 
       const onTransitionEnd = (e) => {
         if (e.target !== box || e.propertyName !== 'height') return
@@ -756,6 +770,18 @@ export default function Home({ initialMessages }) {
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
         box.style.height = `${next.height}px`
         box.style.transform = 'translateX(0)'
+
+        if (content) {
+          // Start the content fade once the box is ~60% of the way through
+          // its own morph — late enough that the shape has mostly settled,
+          // early enough that it doesn't feel like a separate second step.
+          window.clearTimeout(box._contentTO)
+          box._contentTO = window.setTimeout(() => {
+            content.style.transition = `opacity ${Math.round(DURATION * 0.6)}ms var(--ease), transform ${Math.round(DURATION * 0.6)}ms var(--ease)`
+            content.style.opacity = '1'
+            content.style.transform = 'translateY(0)'
+          }, Math.round(DURATION * 0.4))
+        }
       })
       prevBoxRectRef.current = null
     }

@@ -405,20 +405,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   border-radius: var(--radius-sm);
 }
 
-.morph-box > * {
-  animation: morphContentIn 0.45s var(--ease) 0.12s both;
-}
-
-@keyframes morphContentIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+/* Content fade-in timing (opacity/transform/transition) is applied
+   directly from JS, synced to the box's own height-morph progress —
+   see the FLIP effect in index.js. No CSS animation here on purpose:
+   an autoplaying keyframe would fire on its own clock and finish before
+   the box does, which reads as "content pops in, then box catches up"
+   instead of one single morph. */
 
 .btn-send {
   will-change: transform;
@@ -433,7 +425,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   }
 
   .morph-box > * {
-    animation: none;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }
 
