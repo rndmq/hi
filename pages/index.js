@@ -696,6 +696,24 @@ export default function Home({ initialMessages }) {
     setActiveTab(next)
   }
 
+  const startNeonWarmup = () => {
+    const ta = textareaRef.current
+    if (!ta) return
+    window.clearTimeout(startNeonWarmup._to)
+    startNeonWarmup._to = window.setTimeout(() => {
+      ta.classList.remove('neon-startup')
+      // eslint-disable-next-line no-unused-expressions
+      ta.offsetWidth // restart the animation cleanly if re-triggered
+      ta.classList.add('neon-startup')
+      const onNeonEnd = (ev) => {
+        if (ev.target !== ta) return
+        ta.classList.remove('neon-startup')
+        ta.removeEventListener('animationend', onNeonEnd)
+      }
+      ta.addEventListener('animationend', onNeonEnd)
+    }, 160)
+  }
+
   useEffect(() => {
     // Everything below starts at the same instant: the box begins growing/
     // shrinking (height morph) WHILE its content quickly cross-fades in —
@@ -735,7 +753,14 @@ export default function Home({ initialMessages }) {
       // fast (much faster than the box's own morph) starting immediately —
       // so it reads as "box changes shape, content settles in along the
       // way", not as two separate sequential steps.
-      const content = box.firstElementChild
+      // Only the inner .morph-fade element fades — the icon/text group inside
+      // the drop-zone, or the file list. The outer wrapper that carries the
+      // visible border/background (text-area-wrapper, drop-zone) stays fully
+      // solid throughout. The textarea itself isn't faded at all: its border
+      // and its text content are the same DOM element, so there's no way to
+      // fade just the text without fading the border along with it — it
+      // appears fully solid immediately, same as any other box border.
+      const content = box.querySelector('.morph-fade')
       if (content) {
         window.clearTimeout(box._contentTO)
         content.style.transition = 'none'
@@ -759,24 +784,13 @@ export default function Home({ initialMessages }) {
           box.style.height = 'auto'
         })
 
-        // Neon warm-up: only relevant for the Text tab (the textarea is the
-        // element with the neon border). A short pause after the box has
-        // physically settled into shape, then the border flickers up to
-        // full brightness like a tube starting up.
-        const ta = textareaRef.current
-        if (ta && activeTab === 'text') {
-          ta.classList.remove('neon-startup')
-          void ta.offsetWidth // restart the animation if it's already mid-flight
-          window.clearTimeout(box._neonTO)
-          box._neonTO = window.setTimeout(() => {
-            ta.classList.add('neon-startup')
-            const onNeonEnd = (ev) => {
-              if (ev.target !== ta) return
-              ta.classList.remove('neon-startup')
-              ta.removeEventListener('animationend', onNeonEnd)
-            }
-            ta.addEventListener('animationend', onNeonEnd)
-          }, 160)
+        // Neon warm-up is purely cosmetic and touches a different element
+        // (the textarea) — it's deliberately scheduled on its own rAF/timeout
+        // rather than run inline here, so its reflow (classList toggle +
+        // offsetWidth read) never interleaves with the box's own settle
+        // logic above in the same tick.
+        if (activeTab === 'text') {
+          requestAnimationFrame(() => startNeonWarmup())
         }
       }
       box.addEventListener('transitionend', onTransitionEnd)
@@ -1510,16 +1524,18 @@ export default function Home({ initialMessages }) {
                       }}
                       onClick={e => e.stopPropagation()}
                     />
-                    <div className="drop-icon"><IconFolder size={32} /></div>
-                    <div className="drop-text">
-                      <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
-                    </div>
-                    <div className="drop-limit">
-                      Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
+                    <div className="drop-zone-content morph-fade">
+                      <div className="drop-icon"><IconFolder size={32} /></div>
+                      <div className="drop-text">
+                        <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
+                      </div>
+                      <div className="drop-limit">
+                        Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="selected-files-list">
+                  <div className="selected-files-list morph-fade">
                     {selectedFiles.map((f, i) => (
                       <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
                         <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>

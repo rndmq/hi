@@ -405,6 +405,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   border-radius: var(--radius-sm);
 }
 
+/* Applied to the INNER content only (textarea itself, or the icon/text
+   group inside the drop-zone, or the file list) — never to the outer
+   wrapper that carries the visible border/background. That wrapper stays
+   fully solid throughout the morph; only this inner layer fades/settles,
+   via inline styles set from JS in sync with the box's own height morph. */
+.morph-fade {
+  will-change: opacity, transform;
+}
+
 /* Content fade-in timing (opacity/transform/transition) is applied
    directly from JS, synced to the box's own height-morph progress —
    see the FLIP effect in index.js. No CSS animation here on purpose:
@@ -469,14 +478,14 @@ textarea.neon-startup {
 
 @keyframes neonWarmup {
   0%   { border-color: var(--line); box-shadow: none; }
-  8%   { border-color: var(--signal); box-shadow: 0 0 9px 0 var(--signal-dim); }
+  8%   { border-color: var(--signal); box-shadow: 0 0 14px 1px rgba(94, 234, 212, 0.55), 0 0 2px 0 var(--signal); }
   14%  { border-color: var(--line); box-shadow: none; }
-  22%  { border-color: var(--signal); box-shadow: 0 0 10px 0 var(--signal-dim); }
+  22%  { border-color: var(--signal); box-shadow: 0 0 16px 2px rgba(94, 234, 212, 0.6), 0 0 3px 0 var(--signal); }
   28%  { border-color: var(--line-2); box-shadow: none; }
-  38%  { border-color: var(--signal); box-shadow: 0 0 12px 1px var(--signal-dim); }
-  46%  { border-color: var(--signal); box-shadow: 0 0 4px 0 var(--signal-dim-2); }
-  60%  { border-color: var(--signal); box-shadow: 0 0 16px 2px var(--signal-dim); }
-  100% { border-color: var(--signal); box-shadow: 0 0 18px 2px var(--signal-dim); }
+  38%  { border-color: var(--signal); box-shadow: 0 0 20px 3px rgba(94, 234, 212, 0.65), 0 0 4px 1px var(--signal); }
+  46%  { border-color: var(--signal); box-shadow: 0 0 6px 0 rgba(94, 234, 212, 0.3); }
+  60%  { border-color: var(--signal); box-shadow: 0 0 26px 4px rgba(94, 234, 212, 0.75), 0 0 6px 1px var(--signal); }
+  100% { border-color: var(--signal); box-shadow: 0 0 30px 5px rgba(94, 234, 212, 0.8), 0 0 8px 2px var(--signal); }
 }
 
 @media (prefers-reduced-motion: reduce) {
