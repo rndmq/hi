@@ -701,13 +701,17 @@ export default function Home({ initialMessages }) {
     if (!ta) return
     window.clearTimeout(startNeonWarmup._to)
     startNeonWarmup._to = window.setTimeout(() => {
-      ta.classList.remove('neon-startup')
+      ta.classList.remove('neon-startup', 'neon-active')
       // eslint-disable-next-line no-unused-expressions
       ta.offsetWidth // restart the animation cleanly if re-triggered
       ta.classList.add('neon-startup')
       const onNeonEnd = (ev) => {
         if (ev.target !== ta) return
+        // Swap to the persistent glow class instead of just removing
+        // neon-startup — the flicker keyframes are one-shot, but the lit
+        // state should stay until the user actually leaves the Text tab.
         ta.classList.remove('neon-startup')
+        ta.classList.add('neon-active')
         ta.removeEventListener('animationend', onNeonEnd)
       }
       ta.addEventListener('animationend', onNeonEnd)
@@ -769,9 +773,16 @@ export default function Home({ initialMessages }) {
       }
       box.getBoundingClientRect() // force reflow so the jumps above aren't animated
 
-      const onTransitionEnd = (e) => {
-        if (e.target !== box || e.propertyName !== 'height') return
-        box.removeEventListener('transitionend', onTransitionEnd)
+      // Settling logic runs on a plain timer tied to DURATION rather than
+      // waiting for the CSS 'transitionend' event. transitionend can fail
+      // to fire reliably on some mobile browsers (background-tab throttling,
+      // dropped events under load) — when that happened here, the only
+      // thing left running was the safety-net fallback, which just snaps
+      // straight to 'auto' with no animation at all. That's exactly the
+      // "box replaced instantly instead of morphing" bug. A timer that we
+      // control ourselves always fires on schedule.
+      window.clearTimeout(box._morphSettleTO)
+      box._morphSettleTO = window.setTimeout(() => {
         // Re-measure 'auto' right now rather than trusting the animated
         // pixel value, so any subpixel mismatch is corrected invisibly
         // before handing height back to 'auto' for live responsiveness.
@@ -785,22 +796,12 @@ export default function Home({ initialMessages }) {
         })
 
         // Neon warm-up is purely cosmetic and touches a different element
-        // (the textarea) — it's deliberately scheduled on its own rAF/timeout
-        // rather than run inline here, so its reflow (classList toggle +
-        // offsetWidth read) never interleaves with the box's own settle
-        // logic above in the same tick.
+        // (the textarea) — scheduled on its own rAF so its reflow never
+        // interleaves with the settle logic above in the same tick.
         if (activeTab === 'text') {
           requestAnimationFrame(() => startNeonWarmup())
         }
-      }
-      box.addEventListener('transitionend', onTransitionEnd)
-      window.clearTimeout(box._morphFallbackTO)
-      box._morphFallbackTO = window.setTimeout(() => {
-        box.removeEventListener('transitionend', onTransitionEnd)
-        box.style.transition = 'none'
-        box.style.overflow = ''
-        box.style.height = 'auto'
-      }, DURATION + 200)
+      }, DURATION + 20)
 
       requestAnimationFrame(() => {
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
@@ -863,7 +864,7 @@ export default function Home({ initialMessages }) {
           btn._labelTO = window.setTimeout(() => {
             label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
             label.style.opacity = '1'
-          }, Math.round(DURATION * 0.45))
+          }, Math.round(DURATION * 0.25))
         }
       })
       prevBtnRectRef.current = null
