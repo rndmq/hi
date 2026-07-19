@@ -328,38 +328,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .tabs {
-  position: relative; /* anchors .tab-indicator below */
   display: flex;
   gap: 4px;
   padding: 6px;
   border-bottom: 1px solid var(--line);
-}
-
-/* Pill yang geser di belakang tab aktif — gantinya masing-masing tab
-   fade-in/out warna background sendiri-sendiri. Murni transform (translateX),
-   gak ada opacity sama sekali, jadi kelihatannya "pindah" bukan "muncul".
-   Ukuran & jarak animasi-nya dihitung dari padding+gap .tabs di atas (bukan
-   angka sembarang) supaya tetap pas persis di tab manapun kalau nanti
-   paddingnya diubah — lihat komentar di .tab-indicator.is-file. */
-.tab-indicator {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 6px;
-  z-index: 0;
-  width: calc(50% - 8px); /* 50% dari .tabs, dikurangi padding+setengah gap */
-  background: var(--signal);
-  border-radius: 11px;
-  transform: translateX(0);
-  transition: transform 0.3s var(--ease);
-  will-change: transform;
-}
-
-/* Geser sejauh (lebar 1 tab + gap) ke kanan = calc(50% - 4px). Diturunkan
-   dari padding:6px & gap:4px yang sama di atas — lihat penjelasan rumus di
-   komentar .tab-indicator. */
-.tab-indicator.is-file {
-  transform: translateX(calc(50% - 4px));
 }
 
 .tab {
@@ -373,14 +345,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   border: none;
   border-radius: 11px;
   cursor: pointer;
-  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+  transition: all 0.2s var(--ease);
   letter-spacing: 0.1px;
   position: relative;
-  z-index: 1; /* di atas .tab-indicator supaya teks/ikon tetap kebaca */
 }
 
 .tab.active {
   color: var(--signal-ink);
+  background: var(--signal);
   font-weight: 600;
 }
 
@@ -401,88 +373,28 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
    box actually growing/shrinking into its new shape. Animating height
    instead of scaleY keeps the content inside (text, icons) undistorted,
    and it naturally pushes the device-row/button below it down or up in
-   sync since they're just flex siblings reacting to the live layout.
-   position:relative anchors the absolutely-positioned exit pane below. */
+   sync since they're just flex siblings reacting to the live layout. */
 .morph-box {
-  position: relative;
   will-change: height, transform;
   border-radius: var(--radius-sm);
 }
 
-/* Konten di dalam box (textarea vs drop-zone/file-list) berpindah lewat DUA
-   pane: exit (snapshot tab sebelumnya, dibekukan sesaat lewat exitingTab di
-   JS) dan enter (tab yang aktif sekarang). Keduanya SLIDE murni pakai
-   translateY — TIDAK ada opacity sama sekali — biar kesannya "geser masuk/
-   keluar", bukan "muncul/menghilang". Exit geser ke ATAS & keluar (translateY
-   -100% dari tinggi alaminya sendiri, jadi dijamin bersih ke-clip berapapun
-   tinggi kontennya — file-list panjang ataupun textarea pendek); enter geser
-   dari BAWAH ke posisi normal, arah yang sama (ke atas) biar terasa satu alur
-   yang konsisten, bukan dua arah yang saling silang.
-   Exit di-absolute-kan tapi CUMA top/left/right (bukan inset:0 penuh) —
-   sengaja TIDAK dipatok ke tinggi box yang lagi berubah, supaya translateY
-   100% di bawah ini terhitung dari tinggi ALAMI kontennya sendiri, bukan
-   tinggi box yang sedang animasi (kalau dipatok ke box, geserannya bisa
-   kurang jauh buat konten yang lebih tinggi dari box saat itu). Ini juga
-   artinya exit TIDAK ikut menentukan tinggi box — box tetap murni mengikuti
-   tinggi alami pane enter, yang diukur FLIP di JS.
-   Durasi/delay masing-masing datang dari inline style (PANE_EXIT_MS dkk. di
-   komponen), bukan di-hardcode di sini, supaya JS (yang jadwalin unmount pane
-   exit) & CSS (yang menjalankan animasinya) tidak pernah kesimpangan angka.
-   Exit pakai accelerate-curve & lebih cepat (konten lama harus "kabur"
-   duluan); enter pakai decelerate-curve, lebih lambat, plus delay supaya
-   baru muncul menjelang box selesai reshape. Box sendiri sudah dikasih
-   overflow:hidden inline oleh JS selama window animasi ini berlangsung, jadi
-   pane yang lagi geser otomatis ke-clip rapi oleh tepi box — tidak perlu
-   overflow:hidden permanen di sini. */
-.morph-pane-exit {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  pointer-events: none;
-  will-change: transform;
-  animation-name: morphPaneOut;
-  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-  animation-fill-mode: forwards;
+.morph-box > * {
+  animation: morphContentIn 0.45s var(--ease) 0.12s both;
 }
 
-.morph-pane-enter {
-  will-change: transform;
-  animation-name: morphPaneIn;
-  animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
-  animation-fill-mode: both;
-}
-
-@keyframes morphPaneOut {
+@keyframes morphContentIn {
   from {
-    transform: translateY(0);
+    opacity: 0;
+    transform: translateY(6px);
   }
   to {
-    /* -8px ekstra di atas -100% cuma buffer kecil, jaga-jaga sisa 1px
-       kelihatan karena pembulatan subpixel */
-    transform: translateY(calc(-100% - 8px));
-  }
-}
-
-@keyframes morphPaneIn {
-  from {
-    transform: translateY(calc(100% + 8px));
-  }
-  to {
+    opacity: 1;
     transform: translateY(0);
   }
 }
 
-/* position:relative + overflow:hidden membungkus label lama/baru (lihat
-   .btn-send-label di bawah) supaya crossfade teksnya rapi terklip kalau
-   lebar tombol berubah drastis (mis. "Uploading 45%..." -> "↑ Kirim"),
-   tanpa memotong box-shadow :hover milik tombol sendiri (box-shadow
-   digambar di luar border box, tidak ikut ke-clip oleh overflow milik
-   elemen yang sama). */
 .btn-send {
-  position: relative;
-  overflow: hidden;
   will-change: transform;
 }
 
@@ -494,25 +406,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
     height: auto !important;
   }
 
-  /* Beda dari morph-box/btn-send di atas: transform TETAP jalan (biar
-     tetap lompat ke posisi tab yang benar), cuma transition-nya yang
-     dimatikan (biar lompatnya instan, gak animated slide). */
-  .tab-indicator {
-    transition: none !important;
-  }
-
-  .morph-pane-enter,
-  .btn-send-label {
-    animation: none !important;
-  }
-
-  /* exitingTab tidak pernah di-set kalau reduced-motion aktif (lihat
-     switchTab di komponen), jadi .morph-pane-exit/.btn-send-label-exit
-     seharusnya sudah tidak pernah ter-render sama sekali — baris ini
-     cuma jaring pengaman kedua. */
-  .morph-pane-exit,
-  .btn-send-label-exit {
-    display: none !important;
+  .morph-box > * {
+    animation: none;
   }
 }
 
@@ -776,58 +671,6 @@ input[type="text"]::placeholder {
   opacity: 0.4;
   cursor: not-allowed;
   box-shadow: none;
-}
-
-/* Label tombol kirim — geser sendiri, terpisah dari morph POSISI badan
-   tombol (itu FLIP di JS, lihat useEffect di komponen). Sama kayak pane di
-   atas: MURNI translateY, tidak ada opacity/scale, arah geser juga sama
-   (ke atas) biar satu bahasa gerak dengan pane. btn-send-label adalah teks
-   yang lagi masuk (normal flow, ikut align-items:center milik .btn-send);
-   btn-send-label-exit adalah snapshot teks lama, di-absolute-kan &
-   disejajarkan manual ke tengah lewat top:50% (translateY -50% dikomposisi
-   dengan translateY geser-nya — dua fungsi translateY di transform yang
-   sama itu DIJUMLAH, bukan saling timpa, jadi tetap center secara vertikal
-   sepanjang geserannya — lihat keyframes di bawah). left:26px sengaja
-   disamakan dengan padding-left .btn-send supaya titik mulainya pas
-   nyambung dengan posisi teks normal. .btn-send sendiri sudah
-   overflow:hidden (lihat rule di atas), jadi teks yang geser keluar
-   otomatis ke-clip rapi oleh badan tombol. */
-.btn-send-label {
-  display: inline-block;
-  white-space: nowrap;
-  will-change: transform;
-  animation-name: morphLabelIn;
-  animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
-  animation-fill-mode: both;
-}
-
-.btn-send-label-exit {
-  position: absolute;
-  left: 26px;
-  top: 50%;
-  pointer-events: none;
-  will-change: transform;
-  animation-name: morphLabelOut;
-  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-  animation-fill-mode: forwards;
-}
-
-@keyframes morphLabelIn {
-  from {
-    transform: translateY(calc(100% + 4px));
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-@keyframes morphLabelOut {
-  from {
-    transform: translateY(-50%) translateY(0);
-  }
-  to {
-    transform: translateY(-50%) translateY(calc(-100% - 4px));
-  }
 }
 
 /* Progress bar */

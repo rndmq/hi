@@ -674,82 +674,23 @@ function MessageCard({ msg, onDelete, isNew }) {
   )
 }
 
-// ─── Morph Timing (transisi shared-element saat pindah tab) ───────────────────
-//
-// Tiga lapis animasi jalan barengan tiap kali tab diganti:
-//   1. BOX   — kontainer utama (.morph-box) berubah TINGGI & POSISI lewat FLIP
-//      di JS (lihat switchTab + useEffect di bawah). ~620ms, easing simetris
-//      (in-out) karena ini soal "bentuk" yang harus reshape mulus dari awal
-//      sampai akhir — bukan sesuatu yang boleh terasa buru-buru di ujung.
-//   2. PANE  — konten DI DALAM box (textarea vs drop-zone/file-list). BUKAN
-//      crossfade biasa (dua-duanya fade barengan dari awal), tapi pola
-//      "container transform" ala Material: konten lama fade-out CEPAT pakai
-//      accelerate-curve di awal, lalu ada jeda singkat (box masih reshape,
-//      nyaris kosong), baru konten baru fade-in pakai decelerate-curve pas
-//      menjelang box selesai. Ini yang bikin box terasa "satu keping ubah
-//      bentuk", bukan "sesuatu ilang tiba-tiba, muncul sesuatu yang beda".
-//   3. LABEL — teks tombol kirim. Pola sama kayak PANE tapi jauh lebih cepat:
-//      teks pendek, harus langsung kebaca, gak perlu nunggu box selesai.
-//      Badan tombolnya sendiri tetap ngikutin BOX_MORPH_* buat posisi/geser
-//      (lihat useEffect) — cuma isi teksnya yang independen & lebih gesit.
-//
-// Semua angka di bawah dipakai LANGSUNG lewat inline style (animationDuration/
-// animationDelay) di JSX, bukan di-hardcode ulang di globals.css — supaya JS
-// (yang jadwalin kapan elemen exit di-unmount lewat setTimeout) dan CSS (yang
-// benar-benar menjalankan animasinya) tidak pernah kesimpangan angka.
-const BOX_MORPH_DURATION = 620
-const BOX_MORPH_EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
-
-const PANE_EXIT_MS = 170
-const PANE_ENTER_MS = 280
-const PANE_ENTER_DELAY_MS = 300 // selesai ~580ms, sebelum box settle di 620ms
-
-const LABEL_EXIT_MS = 130
-const LABEL_ENTER_MS = 200
-const LABEL_ENTER_DELAY_MS = 150 // teks beres ~350ms — jauh lebih cepat dari box
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
-  // Tab yang BARU SAJA ditinggalkan — non-null cuma selama jendela singkat
-  // setelah klik, dipakai buat render ulang konten tab lama (+ label tombol
-  // lama) sebagai overlay yang fade-out di atas box/tombol, alih-alih lenyap
-  // seketika begitu activeTab berubah (itu yang bikin morph lama terasa
-  // "kasar" — box-nya sudah di-FLIP mulus, tapi isinya pop instan).
-  const [exitingTab, setExitingTab] = useState(null)
   const morphBoxRef = useRef(null)
   const sendBtnRef = useRef(null)
   const prevBoxRectRef = useRef(null)
   const prevBtnRectRef = useRef(null)
-  const exitTimeoutRef = useRef(null)
 
   const switchTab = (next) => {
     if (next === activeTab) return
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-
-    if (!reduceMotion) {
-      // FLIP "First": capture where things are right now, before the DOM changes.
-      if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
-      if (sendBtnRef.current) prevBtnRectRef.current = sendBtnRef.current.getBoundingClientRect()
-
-      // Bekukan tab yang lagi ditinggalkan supaya renderTabContent(leaving)
-      // masih bisa dipanggil sebentar buat overlay fade-out-nya. State yang
-      // dibaca ulang (textInput, selectedFiles, dst.) belum berubah di titik
-      // ini, jadi snapshot-nya otomatis akurat tanpa perlu di-clone manual.
-      const leaving = activeTab
-      setExitingTab(leaving)
-      window.clearTimeout(exitTimeoutRef.current)
-      exitTimeoutRef.current = window.setTimeout(() => {
-        setExitingTab(prev => (prev === leaving ? null : prev))
-      }, PANE_EXIT_MS)
-    }
-
+    // FLIP "First": capture where things are right now, before the DOM changes.
+    if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
+    if (sendBtnRef.current) prevBtnRectRef.current = sendBtnRef.current.getBoundingClientRect()
     setActiveTab(next)
   }
-
-  useEffect(() => () => window.clearTimeout(exitTimeoutRef.current), [])
 
   useEffect(() => {
     // FLIP "Last, Invert, Play" — but animating height (not scaleY) for the
@@ -766,8 +707,8 @@ export default function Home({ initialMessages }) {
       return
     }
 
-    const DURATION = BOX_MORPH_DURATION
-    const EASE = BOX_MORPH_EASE
+    const DURATION = 620
+    const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
@@ -823,18 +764,6 @@ export default function Home({ initialMessages }) {
         btn.style.transition = `transform ${DURATION}ms ${EASE}`
         btn.style.transform = 'translate(0, 0)'
       })
-      // Lepas transform/transition inline setelah settle, supaya balik ke
-      // dikontrol stylesheet sepenuhnya — kalau dibiarkan menggantung di
-      // 'translate(0, 0)', inline style itu (walau visualnya sama dengan
-      // "tanpa transform") tetap MENANG atas aturan :hover/:active di CSS
-      // (translateY(-1px) dkk.), jadi efek hover tombol kirim akan diam-diam
-      // mati permanen begitu tab pernah di-switch sekali saja.
-      window.clearTimeout(btn._morphTO)
-      btn._morphTO = window.setTimeout(() => {
-        btn.style.transition = ''
-        btn.style.transform = ''
-        btn.style.transformOrigin = ''
-      }, DURATION + 30)
       prevBtnRectRef.current = null
     }
   }, [activeTab])
@@ -1374,7 +1303,7 @@ export default function Home({ initialMessages }) {
 
       if (imageFiles.length > 0) {
         addFiles(imageFiles)
-        switchTab('file')
+        setActiveTab('file')
         showToast('Gambar ditempel dari clipboard', 'success')
       } else if (pastedText) {
         setTextInput(prev => prev + pastedText)
@@ -1392,118 +1321,6 @@ export default function Home({ initialMessages }) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleSendText()
     }
-  }
-
-  // Label tombol kirim untuk sebuah tab. Diambil sebagai fungsi (bukan
-  // ditulis langsung di JSX) supaya bisa dipanggil dua kali dengan tab yang
-  // berbeda: sekali untuk label yang lagi masuk (activeTab), sekali lagi
-  // untuk label lama yang lagi fade-out (exitingTab) saat pindah tab.
-  const getSendLabel = (tab) => {
-    if (tab === 'text') return sending ? '...' : '↑ Kirim'
-    if (sending) return `Uploading ${uploadProgress}%...`
-    return selectedFiles.length > 1 ? `↑ Upload ${selectedFiles.length} File` : '↑ Upload File'
-  }
-
-  // Konten morph-box untuk sebuah tab ('text' | 'file'). Dipisah dari JSX
-  // return utama supaya bisa dipanggil dua kali sama seperti getSendLabel di
-  // atas: sekali untuk pane yang aktif sekarang, sekali lagi (dengan
-  // isExit=true) untuk snapshot pane lama yang fade-out. isExit mematikan
-  // autoFocus & tabIndex textarea supaya snapshot yang sedang menghilang itu
-  // tidak diam-diam mencuri fokus keyboard dari pane yang baru masuk.
-  const renderTabContent = (tab, { isExit = false } = {}) => {
-    if (tab === 'text') {
-      return (
-        <div className="text-area-wrapper">
-          <textarea
-            placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
-            value={textInput}
-            onChange={e => setTextInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={4}
-            autoFocus={!isExit}
-            tabIndex={isExit ? -1 : undefined}
-          />
-          <button
-            type="button"
-            className="btn-paste-clipboard"
-            onClick={handleClipboardButton}
-            title="Tempel dari clipboard"
-            tabIndex={isExit ? -1 : undefined}
-          >
-            <IconClipboard size={15} />
-          </button>
-          <span className="char-count">{textInput.length}</span>
-        </div>
-      )
-    }
-
-    if (selectedFiles.length === 0) {
-      return (
-        <div
-          className={`drop-zone ${dragging ? 'dragging' : ''}`}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            tabIndex={isExit ? -1 : undefined}
-            onChange={e => {
-              const picked = Array.from(e.target.files || [])
-              if (picked.length > 0) addFiles(picked)
-            }}
-            onClick={e => e.stopPropagation()}
-          />
-          <div className="drop-icon"><IconFolder size={32} /></div>
-          <div className="drop-text">
-            <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
-          </div>
-          <div className="drop-limit">
-            Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div className="selected-files-list">
-        {selectedFiles.map((f, i) => (
-          <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
-            <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>
-            <div className="selected-file-info">
-              <div className="selected-file-name">{f.name}</div>
-              <div className="selected-file-size">{formatBytes(f.size)}</div>
-            </div>
-            <button
-              className="btn-remove-file"
-              tabIndex={isExit ? -1 : undefined}
-              onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
-            >
-              <IconClose size={11} />
-            </button>
-          </div>
-        ))}
-        <button
-          className="btn-add-more-files"
-          tabIndex={isExit ? -1 : undefined}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          + Tambah file lagi
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          tabIndex={isExit ? -1 : undefined}
-          style={{ display: 'none' }}
-          onChange={e => {
-            const picked = Array.from(e.target.files || [])
-            if (picked.length > 0) addFiles(picked)
-            e.target.value = ''
-          }}
-        />
-      </div>
-    )
   }
 
   return (
@@ -1554,7 +1371,6 @@ export default function Home({ initialMessages }) {
           {/* Send Panel */}
           <div className="send-panel">
             <div className="tabs">
-              <div className={`tab-indicator ${activeTab === 'file' ? 'is-file' : ''}`} aria-hidden="true" />
               <button className={`tab ${activeTab === 'text' ? 'active' : ''}`} onClick={() => switchTab('text')}>
                 <IconSpark size={13} /> Text / Link
               </button>
@@ -1568,33 +1384,87 @@ export default function Home({ initialMessages }) {
                   box (size/shape) is what gets measured and FLIP-animated —
                   the textarea area visually grows/reshapes into the drop
                   zone / file list instead of one pane fading and another
-                  fading in.
-                  Isinya dua pane: satu snapshot tab yang barusan ditinggalkan
-                  (exitingTab, fade-out, absolute — tidak ikut menentukan
-                  tinggi box), satu tab yang aktif sekarang (fade-in, normal
-                  flow — inilah yang diukur FLIP di atas buat tinggi box). */}
+                  fading in. */}
               <div className="morph-box" ref={morphBoxRef}>
-                {exitingTab && (
+                {activeTab === 'text' ? (
+                  <div className="text-area-wrapper">
+                    <textarea
+                      placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
+                      value={textInput}
+                      onChange={e => setTextInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      rows={4}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="btn-paste-clipboard"
+                      onClick={handleClipboardButton}
+                      title="Tempel dari clipboard"
+                    >
+                      <IconClipboard size={15} />
+                    </button>
+                    <span className="char-count">{textInput.length}</span>
+                  </div>
+                ) : selectedFiles.length === 0 ? (
                   <div
-                    key="exit"
-                    className="morph-pane-exit"
-                    aria-hidden="true"
-                    inert=""
-                    style={{ animationDuration: `${PANE_EXIT_MS}ms` }}
+                    className={`drop-zone ${dragging ? 'dragging' : ''}`}
+                    onClick={() => fileInputRef.current?.click()}
                   >
-                    {renderTabContent(exitingTab, { isExit: true })}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      onChange={e => {
+                        const picked = Array.from(e.target.files || [])
+                        if (picked.length > 0) addFiles(picked)
+                      }}
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <div className="drop-icon"><IconFolder size={32} /></div>
+                    <div className="drop-text">
+                      <strong>Klik atau drag & drop</strong> file di sini (bisa lebih dari 1)
+                    </div>
+                    <div className="drop-limit">
+                      Max {formatBytes(MAX_FILE_SIZE)} per file lewat server — lebih dari itu otomatis dikirim P2P langsung ke device lain
+                    </div>
+                  </div>
+                ) : (
+                  <div className="selected-files-list">
+                    {selectedFiles.map((f, i) => (
+                      <div className="selected-file" key={`${f.name}-${f.size}-${i}`}>
+                        <span className="selected-file-icon"><FileIcon type={getFileIcon(f.type, f.name)} size={20} /></span>
+                        <div className="selected-file-info">
+                          <div className="selected-file-name">{f.name}</div>
+                          <div className="selected-file-size">{formatBytes(f.size)}</div>
+                        </div>
+                        <button
+                          className="btn-remove-file"
+                          onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <IconClose size={11} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="btn-add-more-files"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      + Tambah file lagi
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={e => {
+                        const picked = Array.from(e.target.files || [])
+                        if (picked.length > 0) addFiles(picked)
+                        e.target.value = ''
+                      }}
+                    />
                   </div>
                 )}
-                <div
-                  key={`enter-${activeTab}`}
-                  className="morph-pane-enter"
-                  style={{
-                    animationDuration: `${PANE_ENTER_MS}ms`,
-                    animationDelay: `${PANE_ENTER_DELAY_MS}ms`,
-                  }}
-                >
-                  {renderTabContent(activeTab)}
-                </div>
               </div>
 
               {activeTab === 'file' && uploadProgress > 0 && (
@@ -1613,38 +1483,21 @@ export default function Home({ initialMessages }) {
                 />
               </div>
 
-              {/* Same button node across tabs — its POSITION morphs via FLIP
-                  in the effect above. Its LABEL is a separate small crossfade
-                  (exiting span fades out fast, entering span fades in fast)
-                  so the text itself doesn't just pop the instant activeTab
-                  changes — see getSendLabel and the PANE/LABEL timing
-                  constants near the top of the file. */}
+              {/* Same button node across tabs — its label/width morphs via FLIP
+                  instead of two separate buttons cross-fading. */}
               <button
                 className="btn-send"
                 ref={sendBtnRef}
                 onClick={activeTab === 'text' ? handleSendText : handleSendFile}
                 disabled={activeTab === 'text' ? (!textInput.trim() || sending) : (selectedFiles.length === 0 || sending)}
               >
-                {exitingTab && (
-                  <span
-                    key="exit"
-                    className="btn-send-label-exit"
-                    aria-hidden="true"
-                    style={{ animationDuration: `${LABEL_EXIT_MS}ms` }}
-                  >
-                    {getSendLabel(exitingTab)}
-                  </span>
-                )}
-                <span
-                  key={`enter-${activeTab}`}
-                  className="btn-send-label"
-                  style={{
-                    animationDuration: `${LABEL_ENTER_MS}ms`,
-                    animationDelay: `${LABEL_ENTER_DELAY_MS}ms`,
-                  }}
-                >
-                  {getSendLabel(activeTab)}
-                </span>
+                {activeTab === 'text'
+                  ? (sending ? '...' : '↑ Kirim')
+                  : (sending
+                      ? `Uploading ${uploadProgress}%...`
+                      : selectedFiles.length > 1
+                        ? `↑ Upload ${selectedFiles.length} File`
+                        : '↑ Upload File')}
               </button>
             </div>
           </div>
