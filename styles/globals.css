@@ -418,13 +418,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 
 @media (prefers-reduced-motion: reduce) {
   .morph-box,
-  .btn-send {
+  .btn-send,
+  .device-row {
     transition: none !important;
     transform: none !important;
     height: auto !important;
   }
 
-  .morph-box > * {
+  .morph-box > *,
+  .btn-send > span {
     opacity: 1 !important;
     transform: none !important;
   }

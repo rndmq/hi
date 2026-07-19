@@ -681,32 +681,41 @@ export default function Home({ initialMessages }) {
   const [activeTab, setActiveTab] = useState('text')
   const morphBoxRef = useRef(null)
   const sendBtnRef = useRef(null)
+  const deviceRowRef = useRef(null)
   const prevBoxRectRef = useRef(null)
   const prevBtnRectRef = useRef(null)
+  const prevRowRectRef = useRef(null)
 
   const switchTab = (next) => {
     if (next === activeTab) return
     // FLIP "First": capture where things are right now, before the DOM changes.
     if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
     if (sendBtnRef.current) prevBtnRectRef.current = sendBtnRef.current.getBoundingClientRect()
+    if (deviceRowRef.current) prevRowRectRef.current = deviceRowRef.current.getBoundingClientRect()
     setActiveTab(next)
   }
 
   useEffect(() => {
-    // FLIP "Last, Invert, Play" — but animating height (not scaleY) for the
-    // box: text-area -> drop-zone/file-list changes aspect ratio a lot, and
-    // scaling non-uniformly squashes/stretches everything inside it (that's
-    // the "kasar" jank). Animating height directly keeps content undistorted
-    // while the box still visibly grows/shrinks into its new shape.
+    // Everything below starts at the same instant: the box begins growing/
+    // shrinking (height morph) WHILE its content quickly cross-fades in —
+    // there is no "empty box" phase, the new content is visible pretty much
+    // from frame one, just easing in from a slight offset. The device-row
+    // and the send button are separate elements below the box, so their
+    // "movement" isn't automatic like it would be for real siblings in a
+    // pure-CSS layout shift — they're FLIP-tweened (measure old position,
+    // measure new position, animate the delta) so they visibly slide to
+    // their new spot instead of snapping.
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
       prevBtnRectRef.current = null
+      prevRowRectRef.current = null
       return
     }
 
     const DURATION = 620
     const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
+    const CONTENT_FADE_MS = 260
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
@@ -721,31 +730,25 @@ export default function Home({ initialMessages }) {
       box.style.transform = `translateX(${dx}px)`
       box.style.overflow = 'hidden'
 
-      // The new content (textarea <-> drop-zone/file-list) must NOT fade in
-      // on its own timeline — it needs to stay invisible until the box has
-      // actually grown/shrunk into roughly its new shape, otherwise you get
-      // "content pops in first, box catches up after" instead of a single
-      // morph. So: hide it here, force reflow, then only start its fade
-      // once the box's own height transition is most of the way through.
+      // Content starts from a soft offset, not fully hidden, and fades in
+      // fast (much faster than the box's own morph) starting immediately —
+      // so it reads as "box changes shape, content settles in along the
+      // way", not as two separate sequential steps.
       const content = box.firstElementChild
       if (content) {
         window.clearTimeout(box._contentTO)
         content.style.transition = 'none'
-        content.style.opacity = '0'
-        content.style.transform = 'translateY(6px)'
+        content.style.opacity = '0.35'
+        content.style.transform = 'translateY(4px)'
       }
       box.getBoundingClientRect() // force reflow so the jumps above aren't animated
 
       const onTransitionEnd = (e) => {
         if (e.target !== box || e.propertyName !== 'height') return
         box.removeEventListener('transitionend', onTransitionEnd)
-        // Instead of trusting the pixel value we animated to, re-measure
-        // 'auto' right now and only THEN release — if there's any mismatch
-        // (subpixel rounding, a reflow that happened mid-transition), this
-        // sets the exact current auto height first with no transition, so
-        // the visual result is identical to what's on screen; only *after*
-        // that do we hand off to 'auto' for live responsiveness. Both steps
-        // use the same measured number, so there is nothing left to snap.
+        // Re-measure 'auto' right now rather than trusting the animated
+        // pixel value, so any subpixel mismatch is corrected invisibly
+        // before handing height back to 'auto' for live responsiveness.
         box.style.transition = 'none'
         box.style.transform = 'translateX(0)'
         const settled = box.getBoundingClientRect().height
@@ -757,8 +760,6 @@ export default function Home({ initialMessages }) {
       }
       box.addEventListener('transitionend', onTransitionEnd)
       window.clearTimeout(box._morphFallbackTO)
-      // Safety net in case transitionend never fires (e.g. tab switched
-      // again mid-animation and interrupted it) so we don't get stuck.
       box._morphFallbackTO = window.setTimeout(() => {
         box.removeEventListener('transitionend', onTransitionEnd)
         box.style.transition = 'none'
@@ -772,20 +773,35 @@ export default function Home({ initialMessages }) {
         box.style.transform = 'translateX(0)'
 
         if (content) {
-          // Start the content fade once the box is ~60% of the way through
-          // its own morph — late enough that the shape has mostly settled,
-          // early enough that it doesn't feel like a separate second step.
-          window.clearTimeout(box._contentTO)
-          box._contentTO = window.setTimeout(() => {
-            content.style.transition = `opacity ${Math.round(DURATION * 0.6)}ms var(--ease), transform ${Math.round(DURATION * 0.6)}ms var(--ease)`
-            content.style.opacity = '1'
-            content.style.transform = 'translateY(0)'
-          }, Math.round(DURATION * 0.4))
+          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
+          content.style.opacity = '1'
+          content.style.transform = 'translateY(0)'
         }
       })
       prevBoxRectRef.current = null
     }
 
+    // Device-row: slides from its old position to its new one via translateY.
+    const row = deviceRowRef.current
+    const prevRow = prevRowRectRef.current
+    if (row && prevRow) {
+      const next = row.getBoundingClientRect()
+      const dy = prevRow.top - next.top
+      if (Math.abs(dy) > 0.5) {
+        row.style.transition = 'none'
+        row.style.transform = `translateY(${dy}px)`
+        row.getBoundingClientRect()
+        requestAnimationFrame(() => {
+          row.style.transition = `transform ${DURATION}ms ${EASE}`
+          row.style.transform = 'translateY(0)'
+        })
+      }
+      prevRowRectRef.current = null
+    }
+
+    // Send button: slides to its new position; its label only swaps once
+    // the move is mostly done, via a quick fade on the label itself so the
+    // text change doesn't pop mid-flight.
     const btn = sendBtnRef.current
     const prevBtn = prevBtnRectRef.current
     if (btn && prevBtn) {
@@ -796,9 +812,24 @@ export default function Home({ initialMessages }) {
       btn.style.transition = 'none'
       btn.style.transform = `translate(${dx}px, ${dy}px)`
       btn.getBoundingClientRect()
+
+      const label = btn.firstElementChild
+      if (label) {
+        window.clearTimeout(btn._labelTO)
+        label.style.transition = 'none'
+        label.style.opacity = '0'
+      }
+
       requestAnimationFrame(() => {
         btn.style.transition = `transform ${DURATION}ms ${EASE}`
         btn.style.transform = 'translate(0, 0)'
+
+        if (label) {
+          btn._labelTO = window.setTimeout(() => {
+            label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+            label.style.opacity = '1'
+          }, Math.round(DURATION * 0.45))
+        }
       })
       prevBtnRectRef.current = null
     }
@@ -1510,7 +1541,7 @@ export default function Home({ initialMessages }) {
                 </div>
               )}
 
-              <div className="device-row">
+              <div className="device-row" ref={deviceRowRef}>
                 <label>Dari:</label>
                 <input
                   type="text"
@@ -1520,21 +1551,24 @@ export default function Home({ initialMessages }) {
                 />
               </div>
 
-              {/* Same button node across tabs — its label/width morphs via FLIP
-                  instead of two separate buttons cross-fading. */}
+              {/* Same button node across tabs — it tweens to its new position
+                  via FLIP, and the label span inside fades/swaps text once
+                  the move is mostly done (see the effect above). */}
               <button
                 className="btn-send"
                 ref={sendBtnRef}
                 onClick={activeTab === 'text' ? handleSendText : handleSendFile}
                 disabled={activeTab === 'text' ? (!textInput.trim() || sending) : (selectedFiles.length === 0 || sending)}
               >
-                {activeTab === 'text'
-                  ? (sending ? '...' : '↑ Kirim')
-                  : (sending
-                      ? `Uploading ${uploadProgress}%...`
-                      : selectedFiles.length > 1
-                        ? `↑ Upload ${selectedFiles.length} File`
-                        : '↑ Upload File')}
+                <span>
+                  {activeTab === 'text'
+                    ? (sending ? '...' : '↑ Kirim')
+                    : (sending
+                        ? `Uploading ${uploadProgress}%...`
+                        : selectedFiles.length > 1
+                          ? `↑ Upload ${selectedFiles.length} File`
+                          : '↑ Upload File')}
+                </span>
               </button>
             </div>
           </div>
