@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import { supabase } from '../lib/supabase'
 import {
@@ -6,19 +6,6 @@ import {
   IconClose, IconWarning, IconEye, IconTrash, IconFolder, IconInbox,
   IconLaptop, IconPhone, IconDesktop, IconDot, FileIcon
 } from '../components/Icons'
-
-// Plain useEffect runs AFTER the browser paints, so the tab-morph effect below
-// (which pins the box to its old height/opacity before animating) was applying
-// one paint too late — the browser had already shown the box at its new,
-// natural size with content at full opacity for a frame first. That's the
-// "box blinks and jumps" / "content pops in" bug: useLayoutEffect runs
-// synchronously before paint instead, so the pinned starting state is in
-// place before anything hits the screen and only the animated frames are
-// visible. Next.js server-renders this page (getServerSideProps), and
-// useLayoutEffect warns when it runs on the server (no DOM there to lay out),
-// so this falls back to useEffect during SSR and only upgrades to the
-// synchronous version once it's actually running in the browser.
-const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -731,7 +718,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useIsomorphicLayoutEffect(() => {
+  useEffect(() => {
     // Everything below starts at the same instant: the box begins growing/
     // shrinking (height morph) WHILE its content quickly cross-fades in —
     // there is no "empty box" phase, the new content is visible pretty much
@@ -755,12 +742,39 @@ export default function Home({ initialMessages }) {
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
+    const row = deviceRowRef.current
+    const prevRow = prevRowRectRef.current
+    const btn = sendBtnRef.current
+    const prevBtn = prevBtnRectRef.current
+
+    // Declared at effect scope (not inside the `if (box && prevBox)` block
+    // below) because the row/button sections further down need to read
+    // them too — they're two separate `if` blocks, so anything declared
+    // with const/let inside the first one wouldn't be visible there.
+    let rowNextRect = null
+    let btnNextRect = null
+
     if (box && prevBox) {
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
       const next = box.getBoundingClientRect()
       const dx = prevBox.left - next.left
+
+      // IMPORTANT: row/button "next" (final) positions must be measured
+      // RIGHT HERE, while the box is sitting at its natural/auto height —
+      // this is the only moment the DOM reflects where everything will
+      // actually end up. If we wait and measure them later (after the box
+      // gets snapped back down to prevBox.height below), the row/button
+      // would still be laid out against the OLD box height, so their
+      // measured "next" position would equal their "prev" position and the
+      // computed delta would collapse to ~0 — the row/button would then
+      // just snap into place with no visible slide instead of tweening.
+      // This was most noticeable switching Upload → Text (box shrinks a
+      // lot, so the row/button need to visibly slide up) but the same
+      // mismeasurement affects both directions.
+      rowNextRect = row ? row.getBoundingClientRect() : null
+      btnNextRect = btn ? btn.getBoundingClientRect() : null
 
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
@@ -831,10 +845,13 @@ export default function Home({ initialMessages }) {
     }
 
     // Device-row: slides from its old position to its new one via translateY.
-    const row = deviceRowRef.current
-    const prevRow = prevRowRectRef.current
+    // Uses rowNextRect captured above (while the box was briefly at its
+    // natural height) instead of re-measuring now — by this point the box
+    // has already been snapped back down to prevBox.height, so a fresh
+    // getBoundingClientRect() here would once again read the row's OLD
+    // (pre-switch) position and produce a near-zero, wrong delta.
     if (row && prevRow) {
-      const next = row.getBoundingClientRect()
+      const next = rowNextRect || row.getBoundingClientRect()
       const dy = prevRow.top - next.top
       if (Math.abs(dy) > 0.5) {
         row.style.transition = 'none'
@@ -851,10 +868,11 @@ export default function Home({ initialMessages }) {
     // Send button: slides to its new position; its label only swaps once
     // the move is mostly done, via a quick fade on the label itself so the
     // text change doesn't pop mid-flight.
-    const btn = sendBtnRef.current
-    const prevBtn = prevBtnRectRef.current
+    // Same reasoning as the device-row above: reuse btnNextRect captured
+    // while the box was briefly at natural height, rather than re-measuring
+    // here (which would read the button's pre-switch position again).
     if (btn && prevBtn) {
-      const next = btn.getBoundingClientRect()
+      const next = btnNextRect || btn.getBoundingClientRect()
       const dx = prevBtn.left - next.left
       const dy = prevBtn.top - next.top
       btn.style.transformOrigin = 'left center'

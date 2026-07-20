@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import { supabase } from '../lib/supabase'
 import {
@@ -6,6 +6,19 @@ import {
   IconClose, IconWarning, IconEye, IconTrash, IconFolder, IconInbox,
   IconLaptop, IconPhone, IconDesktop, IconDot, FileIcon
 } from '../components/Icons'
+
+// Plain useEffect runs AFTER the browser paints, so the tab-morph effect below
+// (which pins the box to its old height/opacity before animating) was applying
+// one paint too late — the browser had already shown the box at its new,
+// natural size with content at full opacity for a frame first. That's the
+// "box blinks and jumps" / "content pops in" bug: useLayoutEffect runs
+// synchronously before paint instead, so the pinned starting state is in
+// place before anything hits the screen and only the animated frames are
+// visible. Next.js server-renders this page (getServerSideProps), and
+// useLayoutEffect warns when it runs on the server (no DOM there to lay out),
+// so this falls back to useEffect during SSR and only upgrades to the
+// synchronous version once it's actually running in the browser.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -718,7 +731,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     // Everything below starts at the same instant: the box begins growing/
     // shrinking (height morph) WHILE its content quickly cross-fades in —
     // there is no "empty box" phase, the new content is visible pretty much
