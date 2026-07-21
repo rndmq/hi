@@ -392,9 +392,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Height is animated via rAF from JS (pixel-by-pixel with easing).
-     overflow:hidden during animation clips the panel so siblings don't
-     peek below while height is shrinking/growing. */
+  /* Panel height stays 'auto' — only the box's height is animated (see
+     below), so device-row/btn-send are always laid out right under the
+     box's current height and are never overlapped mid-animation. */
 }
 
 /* The box's height is FLIP-animated from JS (snapped to the old height,
@@ -410,10 +410,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   /* Box has its OWN border/background so it stays visible during morph.
      The inner content (textarea, drop-zone, file-list) fades via
      morph-fade opacity. Box border never fades. */
-  /* Height is NOT animated directly — it stays 'auto' and is part
-     of .morph-panel's flex column layout. The PANEL height is what
-     gets animated via rAF, so box + device-row + btn-send all ride
-     together as natural layout children. */
+  /* The box height is FLIP-animated via rAF from JS (snapped to the old
+     height, then eased to the new one), with overflow:hidden set during
+     the morph so the incoming (possibly taller) content is clipped
+     instead of spilling over the device-row/button below. */
 }
 
 /* Applied to the INNER content only (textarea itself, or the icon/text

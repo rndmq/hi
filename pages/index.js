@@ -691,17 +691,17 @@ export default function Home({ initialMessages }) {
   const sendBtnRef = useRef(null)
   const deviceRowRef = useRef(null)
   const textareaRef = useRef(null)
-  const prevPanelRectRef = useRef(null)
+  const prevBoxRectRef = useRef(null)
 
-    const switchTab = (next) => {
+  const switchTab = (next) => {
     if (next === activeTab) return
-    
-    // Rekam seluruh panel height sebelum React re-render
-    if (morphPanelRef.current) {
-      const r = morphPanelRef.current.getBoundingClientRect()
-      prevPanelRectRef.current = { top: r.top, left: r.left, height: r.height }
+
+    // Rekam tinggi morph-box sebelum React re-render
+    if (morphBoxRef.current) {
+      const r = morphBoxRef.current.getBoundingClientRect()
+      prevBoxRectRef.current = { top: r.top, left: r.left, height: r.height }
     }
-    
+
     setActiveTab(next)
   }
 
@@ -728,64 +728,57 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  // Cubic-bezier ease function implemented in JS for rAF-driven animation.
-  function cubicBezierEase(t) {
-    // cubic-bezier(0.65, 0, 0.35, 1) approximated
-    return t < 0.5
-      ? 4 * t * t * t
-      : 1 - Math.pow(-2 * t + 2, 3) / 2
+  // Gentle sine ease-in-out for the rAF-driven morph — peak velocity is
+  // much lower than cubic, so the height change never reads as a snap.
+  function easeInOutSine(t) {
+    return -(Math.cos(Math.PI * t) - 1) / 2
   }
 
   useIsomorphicLayoutEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
-      prevPanelRectRef.current = null
+      prevBoxRectRef.current = null
       return
     }
 
-    const DURATION = 850  // ms — slower, smoother tween
-    const CONTENT_FADE_MS = 350
+    const DURATION = 1000  // ms — slow, gentle tween
+    const CONTENT_FADE_MS = 450
 
-    const panel = morphPanelRef.current
-    const prevPanel = prevPanelRectRef.current
+    const prevBox = prevBoxRectRef.current
     const box = morphBoxRef.current
     const btn = sendBtnRef.current
 
     // Cancel any ongoing morph
-    if (panel && panel._morphRafId) cancelAnimationFrame(panel._morphRafId)
-    if (panel) window.clearTimeout(panel._morphSettleTO)
-    if (panel) panel._morphRafId = null
+    if (box && box._morphRafId) cancelAnimationFrame(box._morphRafId)
+    if (box) window.clearTimeout(box._morphSettleTO)
+    if (box) box._morphRafId = null
 
-    if (panel && prevPanel && box) {
-      // ─── Capture old & new panel dimensions ───
-      // .morph-panel is flex column with gap:14px.
-      // We animate the PANEL height, so box (auto) + device-row + btn-send
-      // all move together as part of the natural layout.
-      panel.style.transition = 'none'
-      panel.style.height = 'auto'
-
-      const nextPanelHeight = panel.getBoundingClientRect().height
-      const startPanelHeight = prevPanel.height
-      const panelHeightDelta = nextPanelHeight - startPanelHeight
-
-      // Snap panel to old height
-      panel.style.height = `${startPanelHeight}px`
-      // Apply overflow:hidden to send-panel (not morph-panel) to prevent
-      // box content from overlapping shared-items below during grow.
-      // We use send-panel overflow (which already has it in CSS) and
-      // ensure it stays hidden during the morph.
-      const sendPanel = panel.closest('.send-panel')
-      if (sendPanel) sendPanel.style.overflow = 'hidden'
-
-      // Box itself: just let it be auto — no explicit height on box
-      box.style.height = 'auto'
+    if (box && prevBox) {
+      // ─── Capture old & new box heights ───
+      // Only the BOX height is animated. The panel stays 'auto', so the
+      // device-row and btn-send below are always laid out right under the
+      // box's CURRENT height — they ride down/up with it and can never be
+      // overlapped by the incoming content.
       box.style.transition = 'none'
-      box.style.transform = 'translateX(0)'
+      box.style.height = 'auto'
+
+      const nextBoxHeight = box.getBoundingClientRect().height
+      const startBoxHeight = prevBox.height
+      const boxHeightDelta = nextBoxHeight - startBoxHeight
+
+      // Snap box to old height; clip the new (possibly taller) content
+      // while the box is still smaller than it.
+      box.style.height = `${startBoxHeight}px`
+      box.style.overflow = 'hidden'
+
+      // The neon glow belongs to the Text tab only — drop it as soon as a
+      // morph starts so it never lingers on the Upload tab's box.
+      box.classList.remove('neon-startup', 'neon-active')
 
       // Fade out content instantly (no transition)
       const content = box.querySelector('.morph-fade')
       if (content) {
-        window.clearTimeout(panel._contentTO)
+        window.clearTimeout(box._contentTO)
         content.style.transition = 'none'
         content.style.opacity = '0'
         content.style.transform = 'translateY(4px)'
@@ -800,36 +793,33 @@ export default function Home({ initialMessages }) {
       }
 
       // Force reflow
-      panel.getBoundingClientRect()
+      box.getBoundingClientRect()
 
-      // ─── Animate panel height pixel-by-pixel via rAF ───
-      // Because panel is flex-column and height is explicit, every frame
-      // the browser reflows children (box at auto, device-row, btn-send)
-      // within the panel's changing bounds. They naturally ride up/down.
+      // ─── Animate box height pixel-by-pixel via rAF ───
       let startTime = null
       const animate = (timestamp) => {
         if (!startTime) startTime = timestamp
         const elapsed = timestamp - startTime
         const rawProgress = Math.min(elapsed / DURATION, 1)
-        const easedProgress = cubicBezierEase(rawProgress)
+        const easedProgress = easeInOutSine(rawProgress)
 
-        const currentPanelHeight = startPanelHeight + panelHeightDelta * easedProgress
-        panel.style.height = `${currentPanelHeight}px`
+        const currentBoxHeight = startBoxHeight + boxHeightDelta * easedProgress
+        box.style.height = `${currentBoxHeight}px`
 
-        // Start fading in content at ~60% progress (content starts
-        // appearing while panel is still morphing, so there's no gap
+        // Start fading in content at ~50% progress (content starts
+        // appearing while the box is still morphing, so there's no gap
         // between "old content gone" and "new content visible").
-        if (rawProgress >= 0.6 && content && content.style.opacity === '0') {
+        if (rawProgress >= 0.5 && content && content.style.opacity === '0') {
           content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
           content.style.opacity = '1'
           content.style.transform = 'translateY(0)'
         }
 
         if (rawProgress < 1) {
-          panel._morphRafId = requestAnimationFrame(animate)
+          box._morphRafId = requestAnimationFrame(animate)
         } else {
           // Animation complete
-          panel._morphRafId = null
+          box._morphRafId = null
 
           // Ensure content is fully visible (in case 60% fade was cancelled)
           if (content) {
@@ -845,11 +835,11 @@ export default function Home({ initialMessages }) {
             }, 50)
           }
 
-          // Cleanup: release explicit height so panel stays responsive
-          panel._morphSettleTO = window.setTimeout(() => {
-            panel.style.height = 'auto'
-            if (sendPanel) sendPanel.style.overflow = ''
-            prevPanelRectRef.current = null
+          // Cleanup: release explicit height so box stays responsive
+          box._morphSettleTO = window.setTimeout(() => {
+            box.style.height = 'auto'
+            box.style.overflow = ''
+            prevBoxRectRef.current = null
 
             if (activeTab === 'text') {
               requestAnimationFrame(() => startNeonWarmup())
@@ -858,7 +848,7 @@ export default function Home({ initialMessages }) {
         }
       }
 
-      panel._morphRafId = requestAnimationFrame(animate)
+      box._morphRafId = requestAnimationFrame(animate)
     } else {
       // Fallback (initial mount or no prev rect): just fade the button label
       if (btn) {
