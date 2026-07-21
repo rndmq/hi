@@ -707,26 +707,24 @@ export default function Home({ initialMessages }) {
 
 
   const startNeonWarmup = () => {
-    // Neon glow lives on the .text-area-wrapper (it carries the visible
-    // border/background now), not on the textarea itself.
-    const wrap = textareaRef.current?.closest('.text-area-wrapper')
-    if (!wrap) return
+    const box = morphBoxRef.current
+    if (!box) return
     window.clearTimeout(startNeonWarmup._to)
     startNeonWarmup._to = window.setTimeout(() => {
-      wrap.classList.remove('neon-startup', 'neon-active')
+      box.classList.remove('neon-startup', 'neon-active')
       // eslint-disable-next-line no-unused-expressions
-      wrap.offsetWidth // restart the animation cleanly if re-triggered
-      wrap.classList.add('neon-startup')
+      box.offsetWidth // restart the animation cleanly if re-triggered
+      box.classList.add('neon-startup')
       const onNeonEnd = (ev) => {
-        if (ev.target !== wrap) return
+        if (ev.target !== box) return
         // Swap to the persistent glow class instead of just removing
         // neon-startup — the flicker keyframes are one-shot, but the lit
         // state should stay until the user actually leaves the Text tab.
-        wrap.classList.remove('neon-startup')
-        wrap.classList.add('neon-active')
-        wrap.removeEventListener('animationend', onNeonEnd)
+        box.classList.remove('neon-startup')
+        box.classList.add('neon-active')
+        box.removeEventListener('animationend', onNeonEnd)
       }
-      wrap.addEventListener('animationend', onNeonEnd)
+      box.addEventListener('animationend', onNeonEnd)
     }, 160)
   }
 
@@ -772,6 +770,10 @@ export default function Home({ initialMessages }) {
       // while the box is still smaller than it.
       box.style.height = `${startBoxHeight}px`
       box.style.overflow = 'hidden'
+
+      // The neon glow belongs to the Text tab only — drop it as soon as a
+      // morph starts so it never lingers on the Upload tab's box.
+      box.classList.remove('neon-startup', 'neon-active')
 
       // Fade out content instantly (no transition)
       const content = box.querySelector('.morph-fade')
