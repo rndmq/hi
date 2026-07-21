@@ -725,7 +725,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-    useIsomorphicLayoutEffect(() => { // atau gunakan useEffect jika kamu pakai itu
+      useIsomorphicLayoutEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -767,11 +767,10 @@ export default function Home({ initialMessages }) {
         btnLabel.style.opacity = '0'
       }
 
-      box.getBoundingClientRect() // force reflow
+      box.getBoundingClientRect()
       window.clearTimeout(box._morphSettleTO)
 
       requestAnimationFrame(() => {
-        // Tweening height box saja. Flexbox akan otomatis mendorong elemen di bawahnya!
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
         box.style.height = `${nextBox.height}px`
         box.style.transform = 'translateX(0)'
@@ -809,6 +808,7 @@ export default function Home({ initialMessages }) {
       prevBoxRectRef.current = null
     }
   }, [activeTab])
+
 
 
       requestAnimationFrame(() => {

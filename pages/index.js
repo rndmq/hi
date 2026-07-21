@@ -692,16 +692,11 @@ export default function Home({ initialMessages }) {
   const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
 
-    const switchTab = (next) => {
+  const switchTab = (next) => {
     if (next === activeTab) return
-    
-    // Hanya perlu merekam posisi container utama sebelum React re-render
     if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
-    
-    // Hapus prevBtnRectRef dan prevRowRectRef
     setActiveTab(next)
   }
-
 
   const startNeonWarmup = () => {
     const ta = textareaRef.current
@@ -710,13 +705,10 @@ export default function Home({ initialMessages }) {
     startNeonWarmup._to = window.setTimeout(() => {
       ta.classList.remove('neon-startup', 'neon-active')
       // eslint-disable-next-line no-unused-expressions
-      ta.offsetWidth // restart the animation cleanly if re-triggered
+      ta.offsetWidth
       ta.classList.add('neon-startup')
       const onNeonEnd = (ev) => {
         if (ev.target !== ta) return
-        // Swap to the persistent glow class instead of just removing
-        // neon-startup — the flicker keyframes are one-shot, but the lit
-        // state should stay until the user actually leaves the Text tab.
         ta.classList.remove('neon-startup')
         ta.classList.add('neon-active')
         ta.removeEventListener('animationend', onNeonEnd)
@@ -725,7 +717,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-      useIsomorphicLayoutEffect(() => {
+  useEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -808,6 +800,8 @@ export default function Home({ initialMessages }) {
       prevBoxRectRef.current = null
     }
   }, [activeTab])
+
+  const [textInput, setTextInput] = useState('')
 
 
 
