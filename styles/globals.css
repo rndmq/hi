@@ -446,6 +446,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   position: relative;
 }
 
+/* Inner morph-fade wrapper inside text-area-wrapper — it must not be
+   positioned so that the absolutely-positioned children (.btn-paste-clipboard,
+   .char-count) still anchor to .text-area-wrapper as their parent. */
+
 textarea {
   width: 100%;
   min-height: 108px;

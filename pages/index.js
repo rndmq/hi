@@ -1456,24 +1456,26 @@ export default function Home({ initialMessages }) {
                   fading in. */}
               <div className="morph-box" ref={morphBoxRef}>
                 {activeTab === 'text' ? (
-                  <div className="text-area-wrapper morph-fade">
-                    <textarea
-                      ref={textareaRef}
-                      placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
-                      value={textInput}
-                      onChange={e => setTextInput(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      rows={4}
-                    />
-                    <button
-                      type="button"
-                      className="btn-paste-clipboard"
-                      onClick={handleClipboardButton}
-                      title="Tempel dari clipboard"
-                    >
-                      <IconClipboard size={15} />
-                    </button>
-                    <span className="char-count">{textInput.length}</span>
+                  <div className="text-area-wrapper">
+                    <div className="morph-fade">
+                      <textarea
+                        ref={textareaRef}
+                        placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
+                        value={textInput}
+                        onChange={e => setTextInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        rows={4}
+                      />
+                      <button
+                        type="button"
+                        className="btn-paste-clipboard"
+                        onClick={handleClipboardButton}
+                        title="Tempel dari clipboard"
+                      >
+                        <IconClipboard size={15} />
+                      </button>
+                      <span className="char-count">{textInput.length}</span>
+                    </div>
                   </div>
                 ) : selectedFiles.length === 0 ? (
                   <div
