@@ -688,7 +688,7 @@ export default function Home({ initialMessages }) {
   const [activeTab, setActiveTab] = useState('text')
   const morphBoxRef = useRef(null)
   const sendBtnRef = useRef(null)
-  const deviceRowRef = useRef(null)
+  const deviceRowRef = useRef(null) // kept for JSX ref (not used in FLIP)
   const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
 
@@ -725,153 +725,117 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-      useIsomorphicLayoutEffect(() => {
-  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  if (reduceMotion) {
-    prevBoxRectRef.current = null
-    return
-  }
-
-  const DURATION = 620
-  const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
-  const CONTENT_FADE_MS = 260
-
-  const box = morphBoxRef.current
-  const prevBox = prevBoxRectRef.current
-  const btn = sendBtnRef.current
-  const row = deviceRowRef.current
-
-  if (box && prevBox) {
-    // ─── Fase 1: Capture state awal (sebelum React render selesai) ───
-    box.style.transition = 'none'
-    box.style.height = 'auto'
-    box.style.transform = 'translateX(0)'
-    
-    const nextBox = box.getBoundingClientRect()
-    const dx = prevBox.left - nextBox.left
-    const dhei = nextBox.height - prevBox.height
-
-    // Capture posisi awal sibling (row & button) sebelum animasi
-    const prevRow = row?.getBoundingClientRect()
-    const prevBtn = btn?.getBoundingClientRect()
-
-    // ─── Fase 2: Reset ke state awal untuk FLIP ───
-    box.style.height = `${prevBox.height}px`
-    box.style.transform = `translateX(${dx}px)`
-    box.style.overflow = 'hidden'
-
-    // Reset siblings ke posisi lama (agar terlihat seperti belum di-re-layout)
-    if (row) {
-      row.style.transition = 'none'
-      row.style.transform = `translateY(${-dhei}px)`
-    }
-    if (btn) {
-      btn.style.transition = 'none'
-      btn.style.transform = `translateY(${-dhei}px)`
+  useIsomorphicLayoutEffect(() => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (reduceMotion) {
+      prevBoxRectRef.current = null
+      return
     }
 
-    // Fade out content
-    const content = box.querySelector('.morph-fade')
-    if (content) {
-      window.clearTimeout(box._contentTO)
-      content.style.transition = 'none'
-      content.style.opacity = '0'
-      content.style.transform = 'translateY(4px)'
-    }
+    const DURATION = 620
+    const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
+    const CONTENT_FADE_MS = 260
 
-    // Fade out button label
-    const btnLabel = btn?.firstElementChild
-    if (btnLabel) {
-      window.clearTimeout(btn._labelTO)
-      btnLabel.style.transition = 'none'
-      btnLabel.style.opacity = '0'
-    }
+    const box = morphBoxRef.current
+    const prevBox = prevBoxRectRef.current
+    const btn = sendBtnRef.current
 
-    // Force browser layout sebelum animasi dimulai
-    box.getBoundingClientRect()
-
-    // ─── Fase 3: Animate ke state akhir ───
-    window.clearTimeout(box._morphSettleTO)
-    requestAnimationFrame(() => {
-      // Apply transition ke semua element
-      box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
-      box.style.height = `${nextBox.height}px`
-      box.style.transform = 'translateX(0)'
-
-      if (row) {
-        row.style.transition = `transform ${DURATION}ms ${EASE}`
-        row.style.transform = 'translateY(0)'
-      }
-
-      if (btn) {
-        btn.style.transition = `transform ${DURATION}ms ${EASE}`
-        btn.style.transform = 'translateY(0)'
-      }
-
-      // Fade in content
-      if (content) {
-        content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
-        content.style.opacity = '1'
-        content.style.transform = 'translateY(0)'
-      }
-
-      // Fade in button label (dengan delay)
-      if (btnLabel) {
-        btn._labelTO = window.setTimeout(() => {
-          btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
-          btnLabel.style.opacity = '1'
-        }, Math.round(DURATION * 0.25))
-      }
-    })
-
-    // ─── Fase 4: Cleanup setelah animasi selesai ───
-    box._morphSettleTO = window.setTimeout(() => {
+    if (box && prevBox) {
+      // Box height is FLIP-animated: snapped to old height, then eased to new.
+      // The device-row and send button are just flex siblings below the box
+      // in .morph-panel (flex-direction:column), so they ride up/down naturally
+      // with the box's live height animation — no separate translateY needed.
       box.style.transition = 'none'
+      box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
-      
-      // Biarkan height tetap auto agar responsive
-      const settled = box.getBoundingClientRect().height
-      box.style.height = `${settled}px`
-      box.style.overflow = ''
 
-      // Bersihkan transform dari siblings
-      if (row) {
-        row.style.transition = 'none'
-        row.style.transform = ''
-      }
-      if (btn) {
-        btn.style.transition = 'none'
-        btn.style.transform = ''
+      const nextBox = box.getBoundingClientRect()
+      const dx = prevBox.left - nextBox.left
+
+      // ─── Fase 1: Snap back to old state ───
+      box.style.height = `${prevBox.height}px`
+      box.style.transform = `translateX(${dx}px)`
+      box.style.overflow = 'hidden'
+
+      // Fade out content
+      const content = box.querySelector('.morph-fade')
+      if (content) {
+        window.clearTimeout(box._contentTO)
+        content.style.transition = 'none'
+        content.style.opacity = '0'
+        content.style.transform = 'translateY(4px)'
       }
 
+      // Fade out button label
+      const btnLabel = btn?.firstElementChild
+      if (btnLabel) {
+        window.clearTimeout(btn._labelTO)
+        btnLabel.style.transition = 'none'
+        btnLabel.style.opacity = '0'
+      }
+
+      // Force layout reflow before starting animation
+      box.getBoundingClientRect()
+
+      // ─── Fase 2: Animate to new state ───
+      window.clearTimeout(box._morphSettleTO)
       requestAnimationFrame(() => {
-        box.style.height = 'auto'
+        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
+        box.style.height = `${nextBox.height}px`
+        box.style.transform = 'translateX(0)'
+
+        // Fade in content
+        if (content) {
+          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
+          content.style.opacity = '1'
+          content.style.transform = 'translateY(0)'
+        }
+
+        // Fade in button label (with delay, synced to box morph progress)
+        if (btnLabel) {
+          btn._labelTO = window.setTimeout(() => {
+            btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+            btnLabel.style.opacity = '1'
+          }, Math.round(DURATION * 0.25))
+        }
       })
 
-      if (activeTab === 'text') {
-        requestAnimationFrame(() => startNeonWarmup())
-      }
+      // ─── Fase 3: Cleanup after animation ───
+      box._morphSettleTO = window.setTimeout(() => {
+        box.style.transition = 'none'
+        box.style.transform = 'translateX(0)'
+        const settled = box.getBoundingClientRect().height
+        box.style.height = `${settled}px`
+        box.style.overflow = ''
 
-      prevBoxRectRef.current = null
-    }, DURATION + 20)
-  } else {
-    // Fallback: hanya label text swap tanpa box animation
-    if (btn) {
-      const label = btn.firstElementChild
-      if (label) {
-        window.clearTimeout(btn._labelTO)
-        label.style.transition = 'none'
-        label.style.opacity = '0'
         requestAnimationFrame(() => {
-          btn._labelTO = window.setTimeout(() => {
-            label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
-            label.style.opacity = '1'
-          }, Math.round(DURATION * 0.25))
+          box.style.height = 'auto'
         })
+
+        if (activeTab === 'text') {
+          requestAnimationFrame(() => startNeonWarmup())
+        }
+
+        prevBoxRectRef.current = null
+      }, DURATION + 20)
+    } else {
+      // Fallback (initial mount or no prev rect): just fade the button label
+      if (btn) {
+        const label = btn.firstElementChild
+        if (label) {
+          window.clearTimeout(btn._labelTO)
+          label.style.transition = 'none'
+          label.style.opacity = '0'
+          requestAnimationFrame(() => {
+            btn._labelTO = window.setTimeout(() => {
+              label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+              label.style.opacity = '1'
+            }, Math.round(DURATION * 0.25))
+          })
+        }
       }
     }
-  }
-}, [activeTab])
+  }, [activeTab])
   const [textInput, setTextInput] = useState('')
   const [selectedFiles, setSelectedFiles] = useState([])
   const [deviceLabel, setDeviceLabel] = useState('')
@@ -1492,7 +1456,7 @@ export default function Home({ initialMessages }) {
                   fading in. */}
               <div className="morph-box" ref={morphBoxRef}>
                 {activeTab === 'text' ? (
-                  <div className="text-area-wrapper">
+                  <div className="text-area-wrapper morph-fade">
                     <textarea
                       ref={textareaRef}
                       placeholder="Ketik teks, paste link, atau apa saja... (Ctrl+Enter untuk kirim)"
