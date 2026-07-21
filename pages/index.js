@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import { supabase } from '../lib/supabase'
+import { getSessionToken, invalidateSessionToken } from '../lib/sessionClient'
 import {
   IconRadar, IconSpark, IconUpload, IconClipboard, IconLink, IconCheck,
   IconClose, IconWarning, IconEye, IconTrash, IconFolder, IconInbox,
@@ -683,6 +684,26 @@ function MessageCard({ msg, onDelete, isNew }) {
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
+// Panggil endpoint yang butuh token sesi (x-ls-token). Kalau server
+// menolak dengan 401 (token expired/invalid), buang token yang di-cache
+// dan coba sekali lagi dengan token baru — supaya user tidak perlu
+// refresh manual kalau tokennya kebetulan kadaluarsa pas dipakai.
+async function fetchWithSessionToken(url, options = {}) {
+  const token = await getSessionToken()
+  const doFetch = (t) => fetch(url, {
+    ...options,
+    headers: { ...(options.headers || {}), 'x-ls-token': t },
+  })
+
+  let res = await doFetch(token)
+  if (res.status === 401) {
+    invalidateSessionToken()
+    const freshToken = await getSessionToken()
+    res = await doFetch(freshToken)
+  }
+  return res
+}
+
 export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
@@ -1175,7 +1196,7 @@ export default function Home({ initialMessages }) {
     if (!textInput.trim()) return
     setSending(true)
     try {
-      const res = await fetch('/api/messages', {
+      const res = await fetchWithSessionToken('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: textInput.trim(), type: 'text', device_label: deviceLabel }),
@@ -1244,7 +1265,7 @@ export default function Home({ initialMessages }) {
         // ada. Payload ini murni teks (URL + info file), jauh di bawah limit
         // body Vercel, jadi tidak akan pernah kena masalah "Request Entity
         // Too Large" walau file aslinya berukuran ratusan MB.
-        const res = await fetch('/api/messages', {
+        const res = await fetchWithSessionToken('/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1284,7 +1305,7 @@ export default function Home({ initialMessages }) {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`/api/messages?id=${id}`, { method: 'DELETE' })
+      const res = await fetchWithSessionToken(`/api/messages?id=${id}`, { method: 'DELETE' })
       const body = await safeParseResponse(res)
       if (!res.ok) throw new Error(body.error || 'Delete failed')
       if (body.warning) showToast(body.warning, 'error')

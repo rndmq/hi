@@ -1,9 +1,34 @@
 import { createClient } from '@supabase/supabase-js'
+import { messagesLimiter, getClientIp } from '../../lib/rateLimit'
+import { verifyToken } from '../../lib/sessionToken'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+// Cek token sesi (header x-ls-token) + rate limit per-IP. Dipakai untuk
+// method yang mengubah data (POST, DELETE) supaya request random dari
+// curl/Termux/shell tanpa token valid langsung ditolak, dan walau ada
+// yang berhasil dapat token, jumlah requestnya tetap dibatasi.
+async function guardMutatingRequest(req, res) {
+  const ip = getClientIp(req)
+  const { success, remaining } = await messagesLimiter.limit(ip)
+  res.setHeader('X-RateLimit-Remaining', String(remaining ?? 0))
+  if (!success) {
+    res.status(429).json({ error: 'Terlalu banyak request. Coba lagi sebentar.' })
+    return false
+  }
+
+  const token = req.headers['x-ls-token']
+  const { valid, reason } = verifyToken(token)
+  if (!valid) {
+    res.status(401).json({ error: `Token sesi tidak valid (${reason}). Muat ulang halaman.` })
+    return false
+  }
+
+  return true
+}
 
 // Public URL Supabase Storage bentuknya:
 //   https://{project}.supabase.co/storage/v1/object/public/localshare/uploads/{filename}
@@ -27,6 +52,8 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
+  if (!(await guardMutatingRequest(req, res))) return
+
   const { content, type, device_label, file_name, file_size, file_type } = req.body
   if (!content) return res.status(400).json({ error: 'Content required' })
 
@@ -52,6 +79,8 @@ export default async function handler(req, res) {
 }
 
   if (req.method === 'DELETE') {
+    if (!(await guardMutatingRequest(req, res))) return
+
     const { id } = req.query
     if (!id) return res.status(400).json({ error: 'ID required' })
 
