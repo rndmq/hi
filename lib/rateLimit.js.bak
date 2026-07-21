@@ -14,7 +14,7 @@ const redis = new Redis({
 // dikit, atau lebih longgar kalau upload beruntun banyak file).
 export const messagesLimiter = new Ratelimit({
   redis,
-  limiter: Ratelimit.slidingWindow(5, '10 s'),
+  limiter: Ratelimit.slidingWindow(15, '60 s'),
   prefix: 'ratelimit:messages',
   analytics: false,
 })
