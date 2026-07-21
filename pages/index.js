@@ -692,11 +692,16 @@ export default function Home({ initialMessages }) {
   const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
 
-  const switchTab = (next) => {
+    const switchTab = (next) => {
     if (next === activeTab) return
+    
+    // Hanya perlu merekam posisi container utama sebelum React re-render
     if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
+    
+    // Hapus prevBtnRectRef dan prevRowRectRef
     setActiveTab(next)
   }
+
 
   const startNeonWarmup = () => {
     const ta = textareaRef.current
@@ -705,10 +710,13 @@ export default function Home({ initialMessages }) {
     startNeonWarmup._to = window.setTimeout(() => {
       ta.classList.remove('neon-startup', 'neon-active')
       // eslint-disable-next-line no-unused-expressions
-      ta.offsetWidth
+      ta.offsetWidth // restart the animation cleanly if re-triggered
       ta.classList.add('neon-startup')
       const onNeonEnd = (ev) => {
         if (ev.target !== ta) return
+        // Swap to the persistent glow class instead of just removing
+        // neon-startup — the flicker keyframes are one-shot, but the lit
+        // state should stay until the user actually leaves the Text tab.
         ta.classList.remove('neon-startup')
         ta.classList.add('neon-active')
         ta.removeEventListener('animationend', onNeonEnd)
@@ -717,7 +725,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useEffect(() => {
+      useIsomorphicLayoutEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -797,25 +805,6 @@ export default function Home({ initialMessages }) {
         }
       }, DURATION + 20)
 
-      prevBoxRectRef.current = null
-    }
-  }, [activeTab])
-
-  const [textInput, setTextInput] = useState('')
-
-
-
-      requestAnimationFrame(() => {
-        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
-        box.style.height = `${next.height}px`
-        box.style.transform = 'translateX(0)'
-
-        if (content) {
-          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
-          content.style.opacity = '1'
-          content.style.transform = 'translateY(0)'
-        }
-      })
       prevBoxRectRef.current = null
     }
 
