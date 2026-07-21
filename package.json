@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0",
     "formidable": "^3.5.4",
     "fs": "^0.0.1-security",
     "install": "^0.13.0",
