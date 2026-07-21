@@ -743,8 +743,8 @@ export default function Home({ initialMessages }) {
       return
     }
 
-    const DURATION = 700  // ms — smooth, noticeable tween
-    const CONTENT_FADE_MS = 280
+    const DURATION = 850  // ms — slower, smoother tween
+    const CONTENT_FADE_MS = 350
 
     const panel = morphPanelRef.current
     const prevPanel = prevPanelRectRef.current
@@ -770,7 +770,9 @@ export default function Home({ initialMessages }) {
 
       // Snap panel to old height
       panel.style.height = `${startPanelHeight}px`
-      panel.style.overflow = 'hidden'
+      // NO overflow:hidden — content fades via opacity (morph-fade),
+      // not by clipping. overflow:hidden would clip the btn-send
+      // during animation making it disappear and reappear at the end.
 
       // Box itself: just let it be auto — no explicit height on box
       box.style.height = 'auto'
@@ -811,30 +813,37 @@ export default function Home({ initialMessages }) {
         const currentPanelHeight = startPanelHeight + panelHeightDelta * easedProgress
         panel.style.height = `${currentPanelHeight}px`
 
+        // Start fading in content at ~60% progress (content starts
+        // appearing while panel is still morphing, so there's no gap
+        // between "old content gone" and "new content visible").
+        if (rawProgress >= 0.6 && content && content.style.opacity === '0') {
+          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
+          content.style.opacity = '1'
+          content.style.transform = 'translateY(0)'
+        }
+
         if (rawProgress < 1) {
           panel._morphRafId = requestAnimationFrame(animate)
         } else {
           // Animation complete
           panel._morphRafId = null
 
-          // Fade in content
+          // Ensure content is fully visible (in case 60% fade was cancelled)
           if (content) {
-            content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
             content.style.opacity = '1'
             content.style.transform = 'translateY(0)'
           }
 
-          // Fade in button label with slight delay
+          // Fade in button label
           if (btnLabel) {
             btn._labelTO = window.setTimeout(() => {
               btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
               btnLabel.style.opacity = '1'
-            }, Math.round(DURATION * 0.2))
+            }, 50)
           }
 
           // Cleanup: release explicit height so panel stays responsive
           panel._morphSettleTO = window.setTimeout(() => {
-            panel.style.overflow = ''
             panel.style.height = 'auto'
             prevPanelRectRef.current = null
 
