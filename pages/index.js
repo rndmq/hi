@@ -806,30 +806,29 @@ export default function Home({ initialMessages }) {
       }, DURATION + 20)
 
       prevBoxRectRef.current = null
-    }
+    } else {
+      // Device-row needs no tween of its own — see the note at the top of
+      // this effect. It just sits below the box as a flex sibling and rides
+      // along with the box's live height animation automatically.
 
-    // Device-row needs no tween of its own — see the note at the top of
-    // this effect. It just sits below the box as a flex sibling and rides
-    // along with the box's live height animation automatically.
-
-    // Send button: also just a flex sibling, so its *position* rides along
-    // with the box automatically like the device-row above. The only thing
-    // that still needs explicit handling is its label text, which swaps
-    // (e.g. "↑ Kirim" -> "↑ Upload File") the instant activeTab changes —
-    // that swap is faded out/in by hand so the text doesn't pop mid-tween.
-    const btn = sendBtnRef.current
-    if (btn) {
-      const label = btn.firstElementChild
-      if (label) {
-        window.clearTimeout(btn._labelTO)
-        label.style.transition = 'none'
-        label.style.opacity = '0'
-        requestAnimationFrame(() => {
-          btn._labelTO = window.setTimeout(() => {
-            label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
-            label.style.opacity = '1'
-          }, Math.round(DURATION * 0.25))
-        })
+      // Send button: also just a flex sibling, so its *position* rides along
+      // with the box automatically like the device-row above. The only thing
+      // that still needs explicit handling is its label text, which swaps
+      // (e.g. "↑ Kirim" -> "↑ Upload File") the instant activeTab changes —
+      // that swap is faded out/in by hand so the text doesn't pop mid-tween.
+      if (btn) {
+        const label = btn.firstElementChild
+        if (label) {
+          window.clearTimeout(btn._labelTO)
+          label.style.transition = 'none'
+          label.style.opacity = '0'
+          requestAnimationFrame(() => {
+            btn._labelTO = window.setTimeout(() => {
+              label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+              label.style.opacity = '1'
+            }, Math.round(DURATION * 0.25))
+          })
+        }
       }
     }
   }, [activeTab])

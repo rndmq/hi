@@ -807,23 +807,6 @@ export default function Home({ initialMessages }) {
 
       prevBoxRectRef.current = null
     }
-  }, [activeTab])
-
-
-
-      requestAnimationFrame(() => {
-        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
-        box.style.height = `${next.height}px`
-        box.style.transform = 'translateX(0)'
-
-        if (content) {
-          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
-          content.style.opacity = '1'
-          content.style.transform = 'translateY(0)'
-        }
-      })
-      prevBoxRectRef.current = null
-    }
 
     // Device-row needs no tween of its own — see the note at the top of
     // this effect. It just sits below the box as a flex sibling and rides
