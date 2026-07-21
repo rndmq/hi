@@ -707,24 +707,24 @@ export default function Home({ initialMessages }) {
 
 
   const startNeonWarmup = () => {
-    const ta = textareaRef.current
-    if (!ta) return
+    const box = morphBoxRef.current
+    if (!box) return
     window.clearTimeout(startNeonWarmup._to)
     startNeonWarmup._to = window.setTimeout(() => {
-      ta.classList.remove('neon-startup', 'neon-active')
+      box.classList.remove('neon-startup', 'neon-active')
       // eslint-disable-next-line no-unused-expressions
-      ta.offsetWidth // restart the animation cleanly if re-triggered
-      ta.classList.add('neon-startup')
+      box.offsetWidth // restart the animation cleanly if re-triggered
+      box.classList.add('neon-startup')
       const onNeonEnd = (ev) => {
-        if (ev.target !== ta) return
+        if (ev.target !== box) return
         // Swap to the persistent glow class instead of just removing
         // neon-startup — the flicker keyframes are one-shot, but the lit
         // state should stay until the user actually leaves the Text tab.
-        ta.classList.remove('neon-startup')
-        ta.classList.add('neon-active')
-        ta.removeEventListener('animationend', onNeonEnd)
+        box.classList.remove('neon-startup')
+        box.classList.add('neon-active')
+        box.removeEventListener('animationend', onNeonEnd)
       }
-      ta.addEventListener('animationend', onNeonEnd)
+      box.addEventListener('animationend', onNeonEnd)
     }, 160)
   }
 
@@ -770,9 +770,12 @@ export default function Home({ initialMessages }) {
 
       // Snap panel to old height
       panel.style.height = `${startPanelHeight}px`
-      // NO overflow:hidden — content fades via opacity (morph-fade),
-      // not by clipping. overflow:hidden would clip the btn-send
-      // during animation making it disappear and reappear at the end.
+      // Apply overflow:hidden to send-panel (not morph-panel) to prevent
+      // box content from overlapping shared-items below during grow.
+      // We use send-panel overflow (which already has it in CSS) and
+      // ensure it stays hidden during the morph.
+      const sendPanel = panel.closest('.send-panel')
+      if (sendPanel) sendPanel.style.overflow = 'hidden'
 
       // Box itself: just let it be auto — no explicit height on box
       box.style.height = 'auto'
@@ -845,6 +848,7 @@ export default function Home({ initialMessages }) {
           // Cleanup: release explicit height so panel stays responsive
           panel._morphSettleTO = window.setTimeout(() => {
             panel.style.height = 'auto'
+            if (sendPanel) sendPanel.style.overflow = ''
             prevPanelRectRef.current = null
 
             if (activeTab === 'text') {
