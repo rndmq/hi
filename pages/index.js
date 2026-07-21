@@ -745,7 +745,7 @@ export default function Home({ initialMessages }) {
       return
     }
 
-    const DURATION = 700  // ms — slightly longer for smoother feel
+    const DURATION = 700  // ms — smooth, noticeable tween
     const CONTENT_FADE_MS = 280
 
     const box = morphBoxRef.current
@@ -765,10 +765,12 @@ export default function Home({ initialMessages }) {
 
       const nextHeight = box.getBoundingClientRect().height
       const startHeight = prevBox.height
+      const heightDelta = nextHeight - startHeight
 
-      // Snap to old height, hide old content, force reflow
+      // Snap to old height
       box.style.height = `${startHeight}px`
-      box.style.overflow = 'hidden'
+      // NO overflow:hidden — we don't need clipping because content fades
+      // via opacity. The box border stays visible throughout.
 
       // Fade out content instantly (no transition)
       const content = box.querySelector('.morph-fade')
@@ -787,10 +789,27 @@ export default function Home({ initialMessages }) {
         btnLabel.style.opacity = '0'
       }
 
+      // ─── Capture initial positions of siblings ───
+      const panel = box.closest('.morph-panel')
+      const panelGap = 14 // px — matches .morph-panel gap
+
+      // Find all siblings after box in .morph-panel
+      const allPanelChildren = panel ? Array.from(panel.children) : []
+      const boxIndex = allPanelChildren.indexOf(box)
+      const siblings = allPanelChildren.slice(boxIndex + 1)
+
+      // Measure initial positions
+      const siblingInitialTops = siblings.map(s => {
+        const boxRect = box.getBoundingClientRect()
+        const sibRect = s.getBoundingClientRect()
+        return sibRect.top - boxRect.bottom - panelGap
+      })
+
       // Force reflow
       box.getBoundingClientRect()
 
       // ─── Animate height pixel-by-pixel via rAF ───
+      // Also animate siblings' translateY so they ride down/up with box
       let startTime = null
       const animate = (timestamp) => {
         if (!startTime) startTime = timestamp
@@ -798,14 +817,26 @@ export default function Home({ initialMessages }) {
         const rawProgress = Math.min(elapsed / DURATION, 1)
         const easedProgress = cubicBezierEase(rawProgress)
 
-        const currentHeight = startHeight + (nextHeight - startHeight) * easedProgress
+        const currentHeight = startHeight + heightDelta * easedProgress
         box.style.height = `${currentHeight}px`
+
+        // Move siblings in sync with box height change
+        // The amount the box has grown so far is the offset to push siblings
+        const currentDelta = heightDelta * easedProgress
+        siblings.forEach((s, i) => {
+          s.style.transform = `translateY(${siblingInitialTops[i] + currentDelta}px)`
+        })
 
         if (rawProgress < 1) {
           box._morphRafId = requestAnimationFrame(animate)
         } else {
           // Animation complete
           box._morphRafId = null
+
+          // Remove sibling transforms — they're now at their natural position
+          siblings.forEach(s => {
+            s.style.transform = ''
+          })
 
           // Fade in content
           if (content) {
@@ -824,7 +855,6 @@ export default function Home({ initialMessages }) {
 
           // Cleanup: release explicit height so box stays responsive
           box._morphSettleTO = window.setTimeout(() => {
-            box.style.overflow = ''
             box.style.height = 'auto'
             prevBoxRectRef.current = null
 
