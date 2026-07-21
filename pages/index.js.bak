@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import { supabase } from '../lib/supabase'
 import {
@@ -6,6 +6,13 @@ import {
   IconClose, IconWarning, IconEye, IconTrash, IconFolder, IconInbox,
   IconLaptop, IconPhone, IconDesktop, IconDot, FileIcon
 } from '../components/Icons'
+
+// This page is server-rendered (see getServerSideProps below), and plain
+// useLayoutEffect logs a harmless-but-noisy "does nothing on the server"
+// warning during SSR/hydration. It's only ever needed for the tab-morph
+// animation below, which can only run after a real user click anyway — so
+// on the server it's fine to fall back to the no-op useEffect.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -684,15 +691,14 @@ export default function Home({ initialMessages }) {
   const deviceRowRef = useRef(null)
   const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
-  const prevBtnRectRef = useRef(null)
-  const prevRowRectRef = useRef(null)
 
   const switchTab = (next) => {
     if (next === activeTab) return
-    // FLIP "First": capture where things are right now, before the DOM changes.
+    // FLIP "First": capture the box's current rect before the DOM changes.
+    // (Only the box itself needs this — device-row and the send button are
+    // its flex siblings and ride along with its height animation for free;
+    // see the effect below.)
     if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
-    if (sendBtnRef.current) prevBtnRectRef.current = sendBtnRef.current.getBoundingClientRect()
-    if (deviceRowRef.current) prevRowRectRef.current = deviceRowRef.current.getBoundingClientRect()
     setActiveTab(next)
   }
 
@@ -718,21 +724,36 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     // Everything below starts at the same instant: the box begins growing/
     // shrinking (height morph) WHILE its content quickly cross-fades in —
     // there is no "empty box" phase, the new content is visible pretty much
-    // from frame one, just easing in from a slight offset. The device-row
-    // and the send button are separate elements below the box, so their
-    // "movement" isn't automatic like it would be for real siblings in a
-    // pure-CSS layout shift — they're FLIP-tweened (measure old position,
-    // measure new position, animate the delta) so they visibly slide to
-    // their new spot instead of snapping.
+    // from frame one, just easing in from a slight offset.
+    //
+    // This runs as useIsomorphicLayoutEffect — useLayoutEffect on the
+    // client (useEffect on the server, a harmless no-op there, see the
+    // definition above) — on purpose: after setActiveTab() commits, React
+    // swaps the box's children (textarea -> drop-zone/file-list), which
+    // immediately gives the box its natural new height with no transition.
+    // Plain useEffect fires *after* the browser has already painted that
+    // commit, so the box (and its flex-siblings below it — device-row, the
+    // send button) would flash at their final size/position for one frame
+    // before this code snaps them back to the old height and starts the
+    // tween — visible as an instant jump followed by the animation,
+    // instead of one continuous morph. useLayoutEffect runs synchronously
+    // right after the DOM mutation but before the browser paints, so the
+    // "snap back to old height" below is the only thing the user ever
+    // actually sees painted before the tween begins.
+    //
+    // The device-row and the send button are NOT separately FLIP-tweened.
+    // They're real flex siblings of the box inside the same flex-column
+    // container, so as the box's height is animated frame-by-frame below,
+    // the browser's own layout continuously pushes them down/up in perfect
+    // sync with the box — for free, on the same frame, with no separate
+    // measurement that could drift out of sync with the box's own tween.
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
-      prevBtnRectRef.current = null
-      prevRowRectRef.current = null
       return
     }
 
@@ -742,39 +763,12 @@ export default function Home({ initialMessages }) {
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
-    const row = deviceRowRef.current
-    const prevRow = prevRowRectRef.current
-    const btn = sendBtnRef.current
-    const prevBtn = prevBtnRectRef.current
-
-    // Declared at effect scope (not inside the `if (box && prevBox)` block
-    // below) because the row/button sections further down need to read
-    // them too — they're two separate `if` blocks, so anything declared
-    // with const/let inside the first one wouldn't be visible there.
-    let rowNextRect = null
-    let btnNextRect = null
-
     if (box && prevBox) {
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
       const next = box.getBoundingClientRect()
       const dx = prevBox.left - next.left
-
-      // IMPORTANT: row/button "next" (final) positions must be measured
-      // RIGHT HERE, while the box is sitting at its natural/auto height —
-      // this is the only moment the DOM reflects where everything will
-      // actually end up. If we wait and measure them later (after the box
-      // gets snapped back down to prevBox.height below), the row/button
-      // would still be laid out against the OLD box height, so their
-      // measured "next" position would equal their "prev" position and the
-      // computed delta would collapse to ~0 — the row/button would then
-      // just snap into place with no visible slide instead of tweening.
-      // This was most noticeable switching Upload → Text (box shrinks a
-      // lot, so the row/button need to visibly slide up) but the same
-      // mismeasurement affects both directions.
-      rowNextRect = row ? row.getBoundingClientRect() : null
-      btnNextRect = btn ? btn.getBoundingClientRect() : null
 
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
@@ -844,61 +838,29 @@ export default function Home({ initialMessages }) {
       prevBoxRectRef.current = null
     }
 
-    // Device-row: slides from its old position to its new one via translateY.
-    // Uses rowNextRect captured above (while the box was briefly at its
-    // natural height) instead of re-measuring now — by this point the box
-    // has already been snapped back down to prevBox.height, so a fresh
-    // getBoundingClientRect() here would once again read the row's OLD
-    // (pre-switch) position and produce a near-zero, wrong delta.
-    if (row && prevRow) {
-      const next = rowNextRect || row.getBoundingClientRect()
-      const dy = prevRow.top - next.top
-      if (Math.abs(dy) > 0.5) {
-        row.style.transition = 'none'
-        row.style.transform = `translateY(${dy}px)`
-        row.getBoundingClientRect()
-        requestAnimationFrame(() => {
-          row.style.transition = `transform ${DURATION}ms ${EASE}`
-          row.style.transform = 'translateY(0)'
-        })
-      }
-      prevRowRectRef.current = null
-    }
+    // Device-row needs no tween of its own — see the note at the top of
+    // this effect. It just sits below the box as a flex sibling and rides
+    // along with the box's live height animation automatically.
 
-    // Send button: slides to its new position; its label only swaps once
-    // the move is mostly done, via a quick fade on the label itself so the
-    // text change doesn't pop mid-flight.
-    // Same reasoning as the device-row above: reuse btnNextRect captured
-    // while the box was briefly at natural height, rather than re-measuring
-    // here (which would read the button's pre-switch position again).
-    if (btn && prevBtn) {
-      const next = btnNextRect || btn.getBoundingClientRect()
-      const dx = prevBtn.left - next.left
-      const dy = prevBtn.top - next.top
-      btn.style.transformOrigin = 'left center'
-      btn.style.transition = 'none'
-      btn.style.transform = `translate(${dx}px, ${dy}px)`
-      btn.getBoundingClientRect()
-
+    // Send button: also just a flex sibling, so its *position* rides along
+    // with the box automatically like the device-row above. The only thing
+    // that still needs explicit handling is its label text, which swaps
+    // (e.g. "↑ Kirim" -> "↑ Upload File") the instant activeTab changes —
+    // that swap is faded out/in by hand so the text doesn't pop mid-tween.
+    const btn = sendBtnRef.current
+    if (btn) {
       const label = btn.firstElementChild
       if (label) {
         window.clearTimeout(btn._labelTO)
         label.style.transition = 'none'
         label.style.opacity = '0'
-      }
-
-      requestAnimationFrame(() => {
-        btn.style.transition = `transform ${DURATION}ms ${EASE}`
-        btn.style.transform = 'translate(0, 0)'
-
-        if (label) {
+        requestAnimationFrame(() => {
           btn._labelTO = window.setTimeout(() => {
             label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
             label.style.opacity = '1'
           }, Math.round(DURATION * 0.25))
-        }
-      })
-      prevBtnRectRef.current = null
+        })
+      }
     }
   }, [activeTab])
 
@@ -1620,9 +1582,10 @@ export default function Home({ initialMessages }) {
                 />
               </div>
 
-              {/* Same button node across tabs — it tweens to its new position
-                  via FLIP, and the label span inside fades/swaps text once
-                  the move is mostly done (see the effect above). */}
+              {/* Same button node across tabs — it rides down/up automatically
+                  as a flex sibling of the box above (no separate FLIP needed
+                  for its position), and the label span inside fades/swaps
+                  text once the move is mostly done (see the effect above). */}
               <button
                 className="btn-send"
                 ref={sendBtnRef}
