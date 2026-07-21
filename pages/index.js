@@ -725,6 +725,19 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
+  // Cubic-bezier ease function implemented in JS so we can drive height
+  // pixel-by-pixel via rAF. When height changes every frame, the flex
+  // siblings (device-row, btn-send) below the box in .morph-panel
+  // (flex-direction:column) are reflowed every frame too — so they ride
+  // down/up in real-time with the box, no CSS transition involved.
+  function cubicBezierEase(t) {
+    // cubic-bezier(0.65, 0, 0.35, 1) — approximated via simple ease-in-out
+    // for performance; the curve is close enough visually.
+    return t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2
+  }
+
   useIsomorphicLayoutEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
@@ -732,32 +745,32 @@ export default function Home({ initialMessages }) {
       return
     }
 
-    const DURATION = 620
-    const EASE = 'cubic-bezier(0.65, 0, 0.35, 1)'
-    const CONTENT_FADE_MS = 260
+    const DURATION = 700  // ms — slightly longer for smoother feel
+    const CONTENT_FADE_MS = 280
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
     const btn = sendBtnRef.current
 
+    // Cancel any ongoing morph
+    if (box._morphRafId) cancelAnimationFrame(box._morphRafId)
+    window.clearTimeout(box._morphSettleTO)
+    box._morphRafId = null
+
     if (box && prevBox) {
-      // Box height is FLIP-animated: snapped to old height, then eased to new.
-      // The device-row and send button are just flex siblings below the box
-      // in .morph-panel (flex-direction:column), so they ride up/down naturally
-      // with the box's live height animation — no separate translateY needed.
+      // ─── Capture old & new dimensions ───
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
 
-      const nextBox = box.getBoundingClientRect()
-      const dx = prevBox.left - nextBox.left
+      const nextHeight = box.getBoundingClientRect().height
+      const startHeight = prevBox.height
 
-      // ─── Fase 1: Snap back to old state ───
-      box.style.height = `${prevBox.height}px`
-      box.style.transform = `translateX(${dx}px)`
+      // Snap to old height, hide old content, force reflow
+      box.style.height = `${startHeight}px`
       box.style.overflow = 'hidden'
 
-      // Fade out content
+      // Fade out content instantly (no transition)
       const content = box.querySelector('.morph-fade')
       if (content) {
         window.clearTimeout(box._contentTO)
@@ -774,50 +787,55 @@ export default function Home({ initialMessages }) {
         btnLabel.style.opacity = '0'
       }
 
-      // Force layout reflow before starting animation
+      // Force reflow
       box.getBoundingClientRect()
 
-      // ─── Fase 2: Animate to new state ───
-      window.clearTimeout(box._morphSettleTO)
-      requestAnimationFrame(() => {
-        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
-        box.style.height = `${nextBox.height}px`
-        box.style.transform = 'translateX(0)'
+      // ─── Animate height pixel-by-pixel via rAF ───
+      let startTime = null
+      const animate = (timestamp) => {
+        if (!startTime) startTime = timestamp
+        const elapsed = timestamp - startTime
+        const rawProgress = Math.min(elapsed / DURATION, 1)
+        const easedProgress = cubicBezierEase(rawProgress)
 
-        // Fade in content
-        if (content) {
-          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
-          content.style.opacity = '1'
-          content.style.transform = 'translateY(0)'
+        const currentHeight = startHeight + (nextHeight - startHeight) * easedProgress
+        box.style.height = `${currentHeight}px`
+
+        if (rawProgress < 1) {
+          box._morphRafId = requestAnimationFrame(animate)
+        } else {
+          // Animation complete
+          box._morphRafId = null
+
+          // Fade in content
+          if (content) {
+            content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
+            content.style.opacity = '1'
+            content.style.transform = 'translateY(0)'
+          }
+
+          // Fade in button label with slight delay
+          if (btnLabel) {
+            btn._labelTO = window.setTimeout(() => {
+              btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+              btnLabel.style.opacity = '1'
+            }, Math.round(DURATION * 0.2))
+          }
+
+          // Cleanup: release explicit height so box stays responsive
+          box._morphSettleTO = window.setTimeout(() => {
+            box.style.overflow = ''
+            box.style.height = 'auto'
+            prevBoxRectRef.current = null
+
+            if (activeTab === 'text') {
+              requestAnimationFrame(() => startNeonWarmup())
+            }
+          }, 100)
         }
+      }
 
-        // Fade in button label (with delay, synced to box morph progress)
-        if (btnLabel) {
-          btn._labelTO = window.setTimeout(() => {
-            btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
-            btnLabel.style.opacity = '1'
-          }, Math.round(DURATION * 0.25))
-        }
-      })
-
-      // ─── Fase 3: Cleanup after animation ───
-      box._morphSettleTO = window.setTimeout(() => {
-        box.style.transition = 'none'
-        box.style.transform = 'translateX(0)'
-        const settled = box.getBoundingClientRect().height
-        box.style.height = `${settled}px`
-        box.style.overflow = ''
-
-        requestAnimationFrame(() => {
-          box.style.height = 'auto'
-        })
-
-        if (activeTab === 'text') {
-          requestAnimationFrame(() => startNeonWarmup())
-        }
-
-        prevBoxRectRef.current = null
-      }, DURATION + 20)
+      box._morphRafId = requestAnimationFrame(animate)
     } else {
       // Fallback (initial mount or no prev rect): just fade the button label
       if (btn) {
@@ -830,7 +848,7 @@ export default function Home({ initialMessages }) {
             btn._labelTO = window.setTimeout(() => {
               label.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
               label.style.opacity = '1'
-            }, Math.round(DURATION * 0.25))
+            }, Math.round(DURATION * 0.2))
           })
         }
       }
