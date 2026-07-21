@@ -725,8 +725,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useIsomorphicLayoutEffect(() => {
-  useEffect(() => {
+    useIsomorphicLayoutEffect(() => { // atau gunakan useEffect jika kamu pakai itu
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -742,7 +741,6 @@ export default function Home({ initialMessages }) {
     const btn = sendBtnRef.current
 
     if (box && prevBox) {
-      // 1. Biarkan box menyesuaikan ukuran alami dengan konten tab yang baru
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
@@ -750,12 +748,10 @@ export default function Home({ initialMessages }) {
       const nextBox = box.getBoundingClientRect()
       const dx = prevBox.left - nextBox.left
 
-      // 2. Kembalikan ukuran box ke ukuran tab lama secara instan sebelum animasi dimulai
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
       box.style.overflow = 'hidden'
 
-      // 3. Persiapkan konten di dalam container untuk efek fade (opacity 0)
       const content = box.querySelector('.morph-fade')
       if (content) {
         window.clearTimeout(box._contentTO)
@@ -764,7 +760,6 @@ export default function Home({ initialMessages }) {
         content.style.transform = 'translateY(4px)'
       }
 
-      // 4. Sembunyikan teks tombol sebentar agar tidak terganti tiba-tiba secara kasar
       const btnLabel = btn?.firstElementChild
       if (btnLabel) {
         window.clearTimeout(btn._labelTO)
@@ -772,26 +767,21 @@ export default function Home({ initialMessages }) {
         btnLabel.style.opacity = '0'
       }
 
-      // 5. Force reflow agar DOM mencatat perubahan "snap back" di atas
-      box.getBoundingClientRect()
+      box.getBoundingClientRect() // force reflow
       window.clearTimeout(box._morphSettleTO)
 
-      // 6. Mulai Tweening!
       requestAnimationFrame(() => {
-        // Karena kita me-resize 'height' pada box, Flexbox secara native akan 
-        // mendorong baris device dan tombol ke bawah/atas dengan sangat mulus.
+        // Tweening height box saja. Flexbox akan otomatis mendorong elemen di bawahnya!
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
         box.style.height = `${nextBox.height}px`
         box.style.transform = 'translateX(0)'
 
-        // Fade in hanya pada konten bagian dalam
         if (content) {
           content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
           content.style.opacity = '1'
           content.style.transform = 'translateY(0)'
         }
 
-        // Fade in teks tombol (muncul perlahan menyusul)
         if (btnLabel) {
           btn._labelTO = window.setTimeout(() => {
             btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
@@ -800,7 +790,6 @@ export default function Home({ initialMessages }) {
         }
       })
 
-      // 7. Kembalikan container ke 'auto' setelah animasi tuntas supaya responsif jika ukuran window berubah
       box._morphSettleTO = window.setTimeout(() => {
         box.style.transition = 'none'
         box.style.transform = 'translateX(0)'
@@ -817,7 +806,6 @@ export default function Home({ initialMessages }) {
         }
       }, DURATION + 20)
 
-      // Bersihkan prevBox dari ref
       prevBoxRectRef.current = null
     }
   }, [activeTab])
