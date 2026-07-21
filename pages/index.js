@@ -725,7 +725,8 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-    useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
+  useEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null

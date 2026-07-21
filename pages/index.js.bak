@@ -692,15 +692,16 @@ export default function Home({ initialMessages }) {
   const textareaRef = useRef(null)
   const prevBoxRectRef = useRef(null)
 
-  const switchTab = (next) => {
+    const switchTab = (next) => {
     if (next === activeTab) return
-    // FLIP "First": capture the box's current rect before the DOM changes.
-    // (Only the box itself needs this — device-row and the send button are
-    // its flex siblings and ride along with its height animation for free;
-    // see the effect below.)
+    
+    // Hanya perlu merekam posisi container utama sebelum React re-render
     if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
+    
+    // Hapus prevBtnRectRef dan prevRowRectRef
     setActiveTab(next)
   }
+
 
   const startNeonWarmup = () => {
     const ta = textareaRef.current
@@ -724,33 +725,7 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  useIsomorphicLayoutEffect(() => {
-    // Everything below starts at the same instant: the box begins growing/
-    // shrinking (height morph) WHILE its content quickly cross-fades in —
-    // there is no "empty box" phase, the new content is visible pretty much
-    // from frame one, just easing in from a slight offset.
-    //
-    // This runs as useIsomorphicLayoutEffect — useLayoutEffect on the
-    // client (useEffect on the server, a harmless no-op there, see the
-    // definition above) — on purpose: after setActiveTab() commits, React
-    // swaps the box's children (textarea -> drop-zone/file-list), which
-    // immediately gives the box its natural new height with no transition.
-    // Plain useEffect fires *after* the browser has already painted that
-    // commit, so the box (and its flex-siblings below it — device-row, the
-    // send button) would flash at their final size/position for one frame
-    // before this code snaps them back to the old height and starts the
-    // tween — visible as an instant jump followed by the animation,
-    // instead of one continuous morph. useLayoutEffect runs synchronously
-    // right after the DOM mutation but before the browser paints, so the
-    // "snap back to old height" below is the only thing the user ever
-    // actually sees painted before the tween begins.
-    //
-    // The device-row and the send button are NOT separately FLIP-tweened.
-    // They're real flex siblings of the box inside the same flex-column
-    // container, so as the box's height is animated frame-by-frame below,
-    // the browser's own layout continuously pushes them down/up in perfect
-    // sync with the box — for free, on the same frame, with no separate
-    // measurement that could drift out of sync with the box's own tween.
+    useEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
       prevBoxRectRef.current = null
@@ -763,66 +738,89 @@ export default function Home({ initialMessages }) {
 
     const box = morphBoxRef.current
     const prevBox = prevBoxRectRef.current
+    const btn = sendBtnRef.current
+
     if (box && prevBox) {
+      // 1. Biarkan box menyesuaikan ukuran alami dengan konten tab yang baru
       box.style.transition = 'none'
       box.style.height = 'auto'
       box.style.transform = 'translateX(0)'
-      const next = box.getBoundingClientRect()
-      const dx = prevBox.left - next.left
+      
+      const nextBox = box.getBoundingClientRect()
+      const dx = prevBox.left - nextBox.left
 
+      // 2. Kembalikan ukuran box ke ukuran tab lama secara instan sebelum animasi dimulai
       box.style.height = `${prevBox.height}px`
       box.style.transform = `translateX(${dx}px)`
       box.style.overflow = 'hidden'
 
-      // Content starts from a soft offset, not fully hidden, and fades in
-      // fast (much faster than the box's own morph) starting immediately —
-      // so it reads as "box changes shape, content settles in along the
-      // way", not as two separate sequential steps.
-      // Only the inner .morph-fade element fades — the icon/text group inside
-      // the drop-zone, or the file list. The outer wrapper that carries the
-      // visible border/background (text-area-wrapper, drop-zone) stays fully
-      // solid throughout. The textarea itself isn't faded at all: its border
-      // and its text content are the same DOM element, so there's no way to
-      // fade just the text without fading the border along with it — it
-      // appears fully solid immediately, same as any other box border.
+      // 3. Persiapkan konten di dalam container untuk efek fade (opacity 0)
       const content = box.querySelector('.morph-fade')
       if (content) {
         window.clearTimeout(box._contentTO)
         content.style.transition = 'none'
-        content.style.opacity = '0.35'
+        content.style.opacity = '0'
         content.style.transform = 'translateY(4px)'
       }
-      box.getBoundingClientRect() // force reflow so the jumps above aren't animated
 
-      // Settling logic runs on a plain timer tied to DURATION rather than
-      // waiting for the CSS 'transitionend' event. transitionend can fail
-      // to fire reliably on some mobile browsers (background-tab throttling,
-      // dropped events under load) — when that happened here, the only
-      // thing left running was the safety-net fallback, which just snaps
-      // straight to 'auto' with no animation at all. That's exactly the
-      // "box replaced instantly instead of morphing" bug. A timer that we
-      // control ourselves always fires on schedule.
+      // 4. Sembunyikan teks tombol sebentar agar tidak terganti tiba-tiba secara kasar
+      const btnLabel = btn?.firstElementChild
+      if (btnLabel) {
+        window.clearTimeout(btn._labelTO)
+        btnLabel.style.transition = 'none'
+        btnLabel.style.opacity = '0'
+      }
+
+      // 5. Force reflow agar DOM mencatat perubahan "snap back" di atas
+      box.getBoundingClientRect()
       window.clearTimeout(box._morphSettleTO)
+
+      // 6. Mulai Tweening!
+      requestAnimationFrame(() => {
+        // Karena kita me-resize 'height' pada box, Flexbox secara native akan 
+        // mendorong baris device dan tombol ke bawah/atas dengan sangat mulus.
+        box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
+        box.style.height = `${nextBox.height}px`
+        box.style.transform = 'translateX(0)'
+
+        // Fade in hanya pada konten bagian dalam
+        if (content) {
+          content.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease), transform ${CONTENT_FADE_MS}ms var(--ease)`
+          content.style.opacity = '1'
+          content.style.transform = 'translateY(0)'
+        }
+
+        // Fade in teks tombol (muncul perlahan menyusul)
+        if (btnLabel) {
+          btn._labelTO = window.setTimeout(() => {
+            btnLabel.style.transition = `opacity ${CONTENT_FADE_MS}ms var(--ease)`
+            btnLabel.style.opacity = '1'
+          }, Math.round(DURATION * 0.25))
+        }
+      })
+
+      // 7. Kembalikan container ke 'auto' setelah animasi tuntas supaya responsif jika ukuran window berubah
       box._morphSettleTO = window.setTimeout(() => {
-        // Re-measure 'auto' right now rather than trusting the animated
-        // pixel value, so any subpixel mismatch is corrected invisibly
-        // before handing height back to 'auto' for live responsiveness.
         box.style.transition = 'none'
         box.style.transform = 'translateX(0)'
         const settled = box.getBoundingClientRect().height
         box.style.height = `${settled}px`
         box.style.overflow = ''
+        
         requestAnimationFrame(() => {
           box.style.height = 'auto'
         })
 
-        // Neon warm-up is purely cosmetic and touches a different element
-        // (the textarea) — scheduled on its own rAF so its reflow never
-        // interleaves with the settle logic above in the same tick.
         if (activeTab === 'text') {
           requestAnimationFrame(() => startNeonWarmup())
         }
       }, DURATION + 20)
+
+      // Bersihkan prevBox dari ref
+      prevBoxRectRef.current = null
+    }
+  }, [activeTab])
+
 
       requestAnimationFrame(() => {
         box.style.transition = `height ${DURATION}ms ${EASE}, transform ${DURATION}ms ${EASE}`
