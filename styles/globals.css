@@ -392,6 +392,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Height is animated via rAF from JS (pixel-by-pixel with easing).
+     overflow:hidden during animation clips the panel so siblings don't
+     peek below while height is shrinking/growing. */
 }
 
 /* The box's height is FLIP-animated from JS (snapped to the old height,
@@ -401,20 +404,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
    and it naturally pushes the device-row/button below it down or up in
    sync since they're just flex siblings reacting to the live layout. */
 .morph-box {
-  will-change: height;
   border-radius: var(--radius-sm);
-  /* NO overflow:hidden — content fades via opacity, not clipping.
-     overflow:hidden would clip the textarea bottom border when height
-     is animating down, making it look like the box border vanished. */
-}
-
-/* Siblings below .morph-box in .morph-panel get translateY applied from
-   JS during the morph animation so they ride up/down in sync with the
-   box height change. will-change:transform keeps this GPU-accelerated. */
-.morph-panel > .device-row,
-.morph-panel > .btn-send,
-.morph-panel > .progress-bar {
-  will-change: transform;
+  /* Box height is NOT animated directly — it stays 'auto' and is part
+     of .morph-panel's flex column layout. The PANEL height is what
+     gets animated via rAF, so box + device-row + btn-send all ride
+     together as natural layout children. */
 }
 
 /* Applied to the INNER content only (textarea itself, or the icon/text
@@ -438,12 +432,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .morph-panel,
   .morph-box,
   .btn-send,
   .device-row {
     transition: none !important;
     transform: none !important;
     height: auto !important;
+    overflow: visible !important;
   }
 
   .morph-box > *,

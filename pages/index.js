@@ -687,18 +687,21 @@ export default function Home({ initialMessages }) {
   const [messages, setMessages] = useState(initialMessages || [])
   const [activeTab, setActiveTab] = useState('text')
   const morphBoxRef = useRef(null)
+  const morphPanelRef = useRef(null)
   const sendBtnRef = useRef(null)
-  const deviceRowRef = useRef(null) // kept for JSX ref (not used in FLIP)
+  const deviceRowRef = useRef(null)
   const textareaRef = useRef(null)
-  const prevBoxRectRef = useRef(null)
+  const prevPanelRectRef = useRef(null)
 
     const switchTab = (next) => {
     if (next === activeTab) return
     
-    // Hanya perlu merekam posisi container utama sebelum React re-render
-    if (morphBoxRef.current) prevBoxRectRef.current = morphBoxRef.current.getBoundingClientRect()
+    // Rekam seluruh panel height sebelum React re-render
+    if (morphPanelRef.current) {
+      const r = morphPanelRef.current.getBoundingClientRect()
+      prevPanelRectRef.current = { top: r.top, left: r.left, height: r.height }
+    }
     
-    // Hapus prevBtnRectRef dan prevRowRectRef
     setActiveTab(next)
   }
 
@@ -725,14 +728,9 @@ export default function Home({ initialMessages }) {
     }, 160)
   }
 
-  // Cubic-bezier ease function implemented in JS so we can drive height
-  // pixel-by-pixel via rAF. When height changes every frame, the flex
-  // siblings (device-row, btn-send) below the box in .morph-panel
-  // (flex-direction:column) are reflowed every frame too — so they ride
-  // down/up in real-time with the box, no CSS transition involved.
+  // Cubic-bezier ease function implemented in JS for rAF-driven animation.
   function cubicBezierEase(t) {
-    // cubic-bezier(0.65, 0, 0.35, 1) — approximated via simple ease-in-out
-    // for performance; the curve is close enough visually.
+    // cubic-bezier(0.65, 0, 0.35, 1) approximated
     return t < 0.5
       ? 4 * t * t * t
       : 1 - Math.pow(-2 * t + 2, 3) / 2
@@ -741,41 +739,48 @@ export default function Home({ initialMessages }) {
   useIsomorphicLayoutEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (reduceMotion) {
-      prevBoxRectRef.current = null
+      prevPanelRectRef.current = null
       return
     }
 
     const DURATION = 700  // ms — smooth, noticeable tween
     const CONTENT_FADE_MS = 280
 
+    const panel = morphPanelRef.current
+    const prevPanel = prevPanelRectRef.current
     const box = morphBoxRef.current
-    const prevBox = prevBoxRectRef.current
     const btn = sendBtnRef.current
 
     // Cancel any ongoing morph
-    if (box._morphRafId) cancelAnimationFrame(box._morphRafId)
-    window.clearTimeout(box._morphSettleTO)
-    box._morphRafId = null
+    if (panel && panel._morphRafId) cancelAnimationFrame(panel._morphRafId)
+    if (panel) window.clearTimeout(panel._morphSettleTO)
+    if (panel) panel._morphRafId = null
 
-    if (box && prevBox) {
-      // ─── Capture old & new dimensions ───
-      box.style.transition = 'none'
+    if (panel && prevPanel && box) {
+      // ─── Capture old & new panel dimensions ───
+      // .morph-panel is flex column with gap:14px.
+      // We animate the PANEL height, so box (auto) + device-row + btn-send
+      // all move together as part of the natural layout.
+      panel.style.transition = 'none'
+      panel.style.height = 'auto'
+
+      const nextPanelHeight = panel.getBoundingClientRect().height
+      const startPanelHeight = prevPanel.height
+      const panelHeightDelta = nextPanelHeight - startPanelHeight
+
+      // Snap panel to old height
+      panel.style.height = `${startPanelHeight}px`
+      panel.style.overflow = 'hidden'
+
+      // Box itself: just let it be auto — no explicit height on box
       box.style.height = 'auto'
+      box.style.transition = 'none'
       box.style.transform = 'translateX(0)'
-
-      const nextHeight = box.getBoundingClientRect().height
-      const startHeight = prevBox.height
-      const heightDelta = nextHeight - startHeight
-
-      // Snap to old height
-      box.style.height = `${startHeight}px`
-      // NO overflow:hidden — we don't need clipping because content fades
-      // via opacity. The box border stays visible throughout.
 
       // Fade out content instantly (no transition)
       const content = box.querySelector('.morph-fade')
       if (content) {
-        window.clearTimeout(box._contentTO)
+        window.clearTimeout(panel._contentTO)
         content.style.transition = 'none'
         content.style.opacity = '0'
         content.style.transform = 'translateY(4px)'
@@ -789,27 +794,13 @@ export default function Home({ initialMessages }) {
         btnLabel.style.opacity = '0'
       }
 
-      // ─── Capture initial positions of siblings ───
-      const panel = box.closest('.morph-panel')
-      const panelGap = 14 // px — matches .morph-panel gap
-
-      // Find all siblings after box in .morph-panel
-      const allPanelChildren = panel ? Array.from(panel.children) : []
-      const boxIndex = allPanelChildren.indexOf(box)
-      const siblings = allPanelChildren.slice(boxIndex + 1)
-
-      // Measure initial positions
-      const siblingInitialTops = siblings.map(s => {
-        const boxRect = box.getBoundingClientRect()
-        const sibRect = s.getBoundingClientRect()
-        return sibRect.top - boxRect.bottom - panelGap
-      })
-
       // Force reflow
-      box.getBoundingClientRect()
+      panel.getBoundingClientRect()
 
-      // ─── Animate height pixel-by-pixel via rAF ───
-      // Also animate siblings' translateY so they ride down/up with box
+      // ─── Animate panel height pixel-by-pixel via rAF ───
+      // Because panel is flex-column and height is explicit, every frame
+      // the browser reflows children (box at auto, device-row, btn-send)
+      // within the panel's changing bounds. They naturally ride up/down.
       let startTime = null
       const animate = (timestamp) => {
         if (!startTime) startTime = timestamp
@@ -817,26 +808,14 @@ export default function Home({ initialMessages }) {
         const rawProgress = Math.min(elapsed / DURATION, 1)
         const easedProgress = cubicBezierEase(rawProgress)
 
-        const currentHeight = startHeight + heightDelta * easedProgress
-        box.style.height = `${currentHeight}px`
-
-        // Move siblings in sync with box height change
-        // The amount the box has grown so far is the offset to push siblings
-        const currentDelta = heightDelta * easedProgress
-        siblings.forEach((s, i) => {
-          s.style.transform = `translateY(${siblingInitialTops[i] + currentDelta}px)`
-        })
+        const currentPanelHeight = startPanelHeight + panelHeightDelta * easedProgress
+        panel.style.height = `${currentPanelHeight}px`
 
         if (rawProgress < 1) {
-          box._morphRafId = requestAnimationFrame(animate)
+          panel._morphRafId = requestAnimationFrame(animate)
         } else {
           // Animation complete
-          box._morphRafId = null
-
-          // Remove sibling transforms — they're now at their natural position
-          siblings.forEach(s => {
-            s.style.transform = ''
-          })
+          panel._morphRafId = null
 
           // Fade in content
           if (content) {
@@ -853,10 +832,11 @@ export default function Home({ initialMessages }) {
             }, Math.round(DURATION * 0.2))
           }
 
-          // Cleanup: release explicit height so box stays responsive
-          box._morphSettleTO = window.setTimeout(() => {
-            box.style.height = 'auto'
-            prevBoxRectRef.current = null
+          // Cleanup: release explicit height so panel stays responsive
+          panel._morphSettleTO = window.setTimeout(() => {
+            panel.style.overflow = ''
+            panel.style.height = 'auto'
+            prevPanelRectRef.current = null
 
             if (activeTab === 'text') {
               requestAnimationFrame(() => startNeonWarmup())
@@ -865,7 +845,7 @@ export default function Home({ initialMessages }) {
         }
       }
 
-      box._morphRafId = requestAnimationFrame(animate)
+      panel._morphRafId = requestAnimationFrame(animate)
     } else {
       // Fallback (initial mount or no prev rect): just fade the button label
       if (btn) {
@@ -1496,7 +1476,7 @@ export default function Home({ initialMessages }) {
               </button>
             </div>
 
-            <div className="morph-panel">
+            <div className="morph-panel" ref={morphPanelRef}>
               {/* Morphing container: same DOM node across both tabs, so its
                   box (size/shape) is what gets measured and FLIP-animated —
                   the textarea area visually grows/reshapes into the drop
