@@ -392,23 +392,22 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Height is animated via rAF from JS (pixel-by-pixel with easing).
-     overflow:hidden during animation clips the panel so siblings don't
-     peek below while height is shrinking/growing. */
+  /* Panel height stays 'auto' — only the box's height is animated (see
+     below), so device-row/btn-send are always laid out right under the
+     box's current height and are never overlapped mid-animation. */
 }
 
 /* The box's height is FLIP-animated from JS (snapped to the old height,
-   then eased to the new one over ~0.6s) — that's what makes it read as the
-   box actually growing/shrinking into its new shape. Animating height
-   instead of scaleY keeps the content inside (text, icons) undistorted,
-   and it naturally pushes the device-row/button below it down or up in
-   sync since they're just flex siblings reacting to the live layout. */
+   then eased to the new one) — that's what makes it read as the box
+   actually growing/shrinking into its new shape. Animating height instead
+   of scaleY keeps the content inside (text, icons) undistorted, and it
+   naturally pushes the device-row/button below it down or up in sync
+   since they're just flex siblings reacting to the live layout.
+   overflow:hidden is set from JS during the morph so the incoming
+   (possibly taller) content is clipped instead of spilling over the
+   device-row/button below. */
 .morph-box {
   border-radius: var(--radius-sm);
-  /* Box height is NOT animated directly — it stays 'auto' and is part
-     of .morph-panel's flex column layout. The PANEL height is what
-     gets animated via rAF, so box + device-row + btn-send all ride
-     together as natural layout children. */
 }
 
 /* Applied to the INNER content only (textarea itself, or the icon/text
@@ -449,9 +448,20 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   }
 }
 
-/* Text input */
+/* Text input — the wrapper carries the visible box (border/background),
+   NOT the textarea, so during the tab morph only the inner .morph-fade
+   content fades while the box itself stays fully solid. */
 .text-area-wrapper {
   position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.text-area-wrapper:focus-within {
+  border-color: var(--signal);
+  background: var(--surface-3);
 }
 
 /* Inner morph-fade wrapper inside text-area-wrapper — it must not be
@@ -459,37 +469,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
    .char-count) still anchor to .text-area-wrapper as their parent. */
 
 textarea {
+  display: block;
   width: 100%;
   min-height: 108px;
   padding: 14px 44px 14px 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: none;
   border-radius: var(--radius);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.65;
   resize: vertical;
-  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
   outline: none;
 }
 
-textarea:focus {
-  border-color: var(--signal);
-  background: var(--surface-3);
-}
-
 /* Neon "warming up" effect: after the box finishes morphing into the Text
-   tab, the textarea's border/glow doesn't just snap to its signal color —
+   tab, the text box's border/glow doesn't just snap to its signal color —
    it flickers up gradually like a neon tube reaching full brightness, then
    STAYS lit (neon-active) instead of reverting once the flicker animation
    ends. neon-startup only drives the one-shot flicker keyframes; neon-active
-   is what holds the final glow persistently, independent of :focus. */
-textarea.neon-startup {
+   is what holds the final glow persistently, independent of focus. The
+   classes live on .text-area-wrapper since that's what carries the border. */
+.text-area-wrapper.neon-startup {
   animation: neonWarmup 1.1s ease-out both;
 }
 
-textarea.neon-active {
+.text-area-wrapper.neon-active {
   border-color: var(--signal);
   box-shadow: 0 0 30px 5px rgba(94, 234, 212, 0.8), 0 0 8px 2px var(--signal);
 }
@@ -507,8 +513,8 @@ textarea.neon-active {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  textarea.neon-startup,
-  textarea.neon-active {
+  .text-area-wrapper.neon-startup,
+  .text-area-wrapper.neon-active {
     animation: none;
     border-color: var(--signal);
     box-shadow: 0 0 30px 5px rgba(94, 234, 212, 0.8), 0 0 8px 2px var(--signal);
